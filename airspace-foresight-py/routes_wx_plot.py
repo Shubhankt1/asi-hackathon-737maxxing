@@ -399,8 +399,73 @@ _REROUTE_JS = r"""
     return path;
   }
 
-  // name -> algorithm. Extensible: add more entries and they show up in the picker.
-  var REROUTERS = { astar: aStar };
+  // -- line of sight (mirrors rerouting.line_of_sight) --
+  // True if the straight segment between two cells crosses no storm cell.
+  function lineOfSight(layer, i0, j0, i1, j1) {
+    var di = i1 - i0, dj = j1 - j0, n = Math.max(Math.abs(di), Math.abs(dj));
+    if (n === 0) return layer[i0 * COLS + j0] < CFG.hazard_dbz;
+    var steps = 2 * n;
+    for (var k = 0; k <= steps; k++) {
+      var t = k / steps;
+      var ii = Math.floor(i0 + di * t + 0.5), jj = Math.floor(j0 + dj * t + 0.5);
+      if (layer[ii * COLS + jj] >= CFG.hazard_dbz) return false;
+    }
+    return true;
+  }
+
+  // -- Theta* / any-angle A* (mirrors rerouting.ThetaStarRouter.route) --
+  // Like A*, but links a neighbor straight back to the current cell's parent
+  // whenever there's clear line of sight, yielding long straight legs instead
+  // of grid-edge zig-zags.
+  function thetaStar(start, goal, frame) {
+    var layer = HAZ.layers[frame];
+    var sc = toCell(start[0], start[1]), gc = toCell(goal[0], goal[1]);
+    var startId = sc[0] * COLS + sc[1], goalId = gc[0] * COLS + gc[1];
+    var goalC = cellCenter(gc[0], gc[1]);
+    function h(i, j) { var c = cellCenter(i, j); return haversineKm(c[0], c[1], goalC[0], goalC[1]); }
+    function dist(ai, aj, bi, bj) { var a = cellCenter(ai, aj), b = cellCenter(bi, bj); return haversineKm(a[0], a[1], b[0], b[1]); }
+    var N = ROWS * COLS;
+    var gScore = new Float64Array(N); gScore.fill(Infinity); gScore[startId] = 0;
+    var parent = new Int32Array(N); parent.fill(-1); parent[startId] = startId;
+    var closed = new Uint8Array(N);
+    var open = new Heap(); open.push(h(sc[0], sc[1]), startId);
+    var NB = [[-1,-1],[-1,0],[-1,1],[0,-1],[0,1],[1,-1],[1,0],[1,1]];
+    var found = (startId === goalId);
+    while (open.size()) {
+      var cur = open.pop()[1];
+      if (cur === goalId) { found = true; break; }
+      if (closed[cur]) continue;
+      closed[cur] = 1;
+      var ci = (cur / COLS) | 0, cj = cur % COLS;
+      var par = parent[cur], pi = (par / COLS) | 0, pj = par % COLS;
+      for (var k = 0; k < 8; k++) {
+        var ni = ci + NB[k][0], nj = cj + NB[k][1];
+        if (ni < 0 || ni >= ROWS || nj < 0 || nj >= COLS) continue;
+        var nid = ni * COLS + nj;
+        if (closed[nid]) continue;
+        var candPar, candG;
+        if (lineOfSight(layer, pi, pj, ni, nj)) {       // path 2: direct from parent
+          candPar = par; candG = gScore[par] + dist(pi, pj, ni, nj);
+        } else {                                        // path 1: ordinary step
+          candPar = cur; candG = gScore[cur] + dist(ci, cj, ni, nj) * hazardMultiplier(layer[nid]);
+        }
+        if (candG < gScore[nid]) { parent[nid] = candPar; gScore[nid] = candG; open.push(candG + h(ni, nj), nid); }
+      }
+    }
+    if (!found) return [start.slice(), goal.slice()];
+    var cells = [goalId];
+    while (parent[cells[cells.length - 1]] !== cells[cells.length - 1]) cells.push(parent[cells[cells.length - 1]]);
+    cells.reverse();
+    var path = [start.slice()];
+    for (var x = 0; x < cells.length; x++) path.push(cellCenter((cells[x] / COLS) | 0, cells[x] % COLS));
+    path.push(goal.slice());
+    return path;
+  }
+
+  // name -> algorithm. Extensible: add more entries and they show up in the
+  // picker. Theta* is listed first so the smoother route is the default.
+  var REROUTERS = { thetastar: thetaStar, astar: aStar };
+  var ALGO_LABELS = { thetastar: 'Theta* (smooth)', astar: 'A* (grid)' };
 
   // -- which forecast frame is on screen right now --
   function currentFrame() {
@@ -415,7 +480,7 @@ _REROUTE_JS = r"""
     'background:rgba(255,255,255,0.95);border:1px solid #bbb;border-radius:6px;' +
     'box-shadow:0 2px 8px rgba(0,0,0,0.2);font:12px sans-serif;';
   var algoOpts = Object.keys(REROUTERS).map(function (n) {
-    return '<option value="' + n + '">' + n.toUpperCase() + '</option>'; }).join('');
+    return '<option value="' + n + '">' + (ALGO_LABELS[n] || n.toUpperCase()) + '</option>'; }).join('');
   panel.innerHTML =
     '<div id="rr-label" style="font-weight:600;margin-bottom:4px;max-width:220px;"></div>' +
     '<select id="rr-algo" style="margin-right:6px;">' + algoOpts + '</select>' +
@@ -459,7 +524,7 @@ _REROUTE_JS = r"""
     Plotly.addTraces(gd, [
       { type: 'scattermap', name: 'reroute', mode: 'lines',
         lat: lats, lon: lons, line: { width: 3, color: '#00b050' },
-        hoverinfo: 'text', text: algo.toUpperCase() + ' reroute · ' + sel.label },
+        hoverinfo: 'text', text: (ALGO_LABELS[algo] || algo) + ' reroute · ' + sel.label },
       { type: 'scattermap', name: 'reroute-pts', mode: 'markers',
         lat: [sel.lat, sel.destLat], lon: [sel.lon, sel.destLon],
         marker: { size: 9, color: ['#1565c0', '#00b050'], symbol: 'circle' },
