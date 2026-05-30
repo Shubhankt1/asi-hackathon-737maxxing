@@ -16,6 +16,9 @@ import {
 // Offline US basemap geometry is identical across the whole app, so fetch once.
 let _basemapCache: BasemapResp | null = null;
 
+// In "alerts" color mode, a sector is "high density" at/above this load ratio.
+const ALERT_RATIO = 0.85;
+
 interface ProjectedSector {
   name: string;
   capacity: number;
@@ -31,11 +34,14 @@ export interface FlightPoint {
   altFt?: number; // cruise altitude -> Viridis marker color (Python-map style)
 }
 
+export type SectorColorMode = "all" | "alerts" | "off";
+
 interface Props {
   sectors: SectorGeom[];
   band: "HIGH" | "LOW";
   demandByName: Map<string, number[]>;
   timeIndex: number;
+  colorMode?: SectorColorMode; // all sectors / alerts only / no coloring
   onPick?: (name: string | null) => void;
   selected?: string | null;
   showWeather: boolean;
@@ -100,6 +106,7 @@ export function SectorMap({
   band,
   demandByName,
   timeIndex,
+  colorMode = "all",
   onPick,
   selected,
   showWeather,
@@ -213,23 +220,57 @@ export function SectorMap({
       }
     }
 
-    // 1) sector demand fills (translucent over the basemap)
-    for (const ps of list) {
-      const series = demandByName.get(ps.name);
-      const d = series ? series[timeIndex] || 0 : 0;
-      const ratio = d / ps.capacity;
-      const pts = ps.pts;
-      ctx.beginPath();
-      ctx.moveTo(pts[0], pts[1]);
-      for (let i = 1; i < pts.length / 2; i++)
-        ctx.lineTo(pts[i * 2], pts[i * 2 + 1]);
-      ctx.closePath();
-      ctx.fillStyle = demandFill(ratio);
-      ctx.fill();
-      ctx.lineWidth = ratio >= 1 ? 1.2 : 0.4;
-      ctx.strokeStyle =
-        ratio >= 1 ? "rgba(190,30,30,0.8)" : "rgba(100,116,139,0.18)";
-      ctx.stroke();
+    // 1) sector demand fills (translucent over the basemap). Which sectors are
+    //    colored depends on colorMode: "all", none ("off"), or only the alert
+    //    sectors ("alerts" = high density OR overlapping convective weather).
+    if (colorMode !== "off") {
+      // sectors overlapping hazardous (>=40 dBZ) weather, for "alerts" mode
+      let badWx: Set<string> | null = null;
+      if (colorMode === "alerts" && showWeather && weatherCells?.length) {
+        badWx = new Set();
+        const haz: [number, number][] = [];
+        for (const c of weatherCells) {
+          if (c[2] < 40) continue;
+          const p = proj([c[1], c[0]]);
+          if (p) haz.push(p as [number, number]);
+        }
+        for (const ps of list) {
+          const [minx, miny, maxx, maxy] = ps.sbbox;
+          for (const [hx, hy] of haz) {
+            if (hx < minx || hx > maxx || hy < miny || hy > maxy) continue;
+            if (pointInScreenRing(hx, hy, ps.pts)) {
+              badWx.add(ps.name);
+              break;
+            }
+          }
+        }
+      }
+
+      for (const ps of list) {
+        const series = demandByName.get(ps.name);
+        const d = series ? series[timeIndex] || 0 : 0;
+        const ratio = d / ps.capacity;
+        // in "alerts" mode show only high-density (near/over capacity) or
+        // bad-weather sectors; "all" shows everything.
+        if (
+          colorMode === "alerts" &&
+          ratio < ALERT_RATIO &&
+          !(badWx?.has(ps.name) ?? false)
+        )
+          continue;
+        const pts = ps.pts;
+        ctx.beginPath();
+        ctx.moveTo(pts[0], pts[1]);
+        for (let i = 1; i < pts.length / 2; i++)
+          ctx.lineTo(pts[i * 2], pts[i * 2 + 1]);
+        ctx.closePath();
+        ctx.fillStyle = demandFill(ratio);
+        ctx.fill();
+        ctx.lineWidth = ratio >= 1 ? 1.2 : 0.4;
+        ctx.strokeStyle =
+          ratio >= 1 ? "rgba(190,30,30,0.8)" : "rgba(100,116,139,0.18)";
+        ctx.stroke();
+      }
     }
 
     // 1b) US state borders on top of the choropleth, so the country geography
@@ -352,6 +393,7 @@ export function SectorMap({
     base,
     demandByName,
     timeIndex,
+    colorMode,
     size,
     selected,
     showWeather,
