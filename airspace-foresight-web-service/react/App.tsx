@@ -10,7 +10,7 @@ import {
   WhatIfResp,
   WxCell,
 } from "./api";
-import { FlightPoint, SectorMap } from "./SectorMap";
+import { FlightPoint, SectorColorMode, SectorMap } from "./SectorMap";
 import { SectorTimeline } from "./SectorTimeline";
 import { Logo } from "./Logo";
 import { PreparedTrack, posOnTrack, prepareTrack } from "./maputil";
@@ -70,6 +70,11 @@ const App = () => {
     "thetastar",
   );
   const [showWeather, setShowWeather] = useState(true);
+  const [sectorColorMode, setSectorColorMode] = useState<SectorColorMode>(
+    (["all", "alerts", "off"] as const).includes(params.get("colors") as any)
+      ? (params.get("colors") as SectorColorMode)
+      : "all",
+  );
   const [flightMode, setFlightMode] = useState<FlightMode>(
     (["conflicts", "all", "weather", "off"] as const).includes(
       params.get("flights") as any,
@@ -404,6 +409,7 @@ const App = () => {
             denseFlights={flightMode === "all"}
             selectedTrack={selectedTrack}
             rerouteTrack={reroute?.reroute?.lats?.length ? reroute.reroute : null}
+            colorMode={sectorColorMode}
           />
           <div className="absolute left-3 top-3 flex flex-col gap-2">
             <div className="flex overflow-hidden rounded-md border border-slate-700 text-xs">
@@ -452,6 +458,18 @@ const App = () => {
               <option value="all">✈ flights: all airborne</option>
               <option value="weather">✈ flights: in weather now</option>
               <option value="off">✈ flights: off</option>
+            </select>
+            <select
+              value={sectorColorMode}
+              onChange={(e) =>
+                setSectorColorMode(e.target.value as SectorColorMode)
+              }
+              className="rounded-md border border-slate-700 bg-slate-800/90 px-2 py-1 text-xs text-slate-200"
+              title="Which sectors to color by demand"
+            >
+              <option value="all">▦ sectors: all colors</option>
+              <option value="alerts">▦ sectors: high-density / weather</option>
+              <option value="off">▦ sectors: no colors</option>
             </select>
             <Legend />
           </div>
