@@ -12,6 +12,7 @@ import {
 } from "./api";
 import { FlightPoint, SectorMap } from "./SectorMap";
 import { SectorTimeline } from "./SectorTimeline";
+import { Logo } from "./Logo";
 import { PreparedTrack, posOnTrack, prepareTrack } from "./maputil";
 
 type Band = "HIGH" | "LOW";
@@ -321,13 +322,17 @@ const App = () => {
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-slate-950 font-sans text-slate-200">
       <header className="flex items-center gap-6 border-b border-slate-800 bg-slate-900/80 px-5 py-3">
-        <div className="flex items-baseline gap-2">
-          <span className="text-lg font-extrabold tracking-tight text-sky-400">
-            Airspace Foresight
-          </span>
-          <span className="hidden text-xs text-slate-500 md:inline">
-            NAS demand · weather risk forecast
-          </span>
+        <div className="flex items-center gap-2.5">
+          <Logo size={32} />
+          <div className="flex flex-col leading-none">
+            <span className="text-base font-extrabold tracking-tight">
+              <span className="text-sky-400">Airspace</span>{" "}
+              <span className="text-slate-100">Foresight</span>
+            </span>
+            <span className="mt-0.5 hidden text-[10px] text-slate-500 md:inline">
+              NAS demand · weather risk forecast
+            </span>
+          </div>
         </div>
         <select
           className="rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-200"
