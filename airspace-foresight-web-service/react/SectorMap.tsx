@@ -1,14 +1,20 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { GeoProjection } from "d3-geo";
-import { SectorGeom, WxCell } from "./api";
+import { api, BasemapResp, SectorGeom, WxCell } from "./api";
 import {
   demandFill,
+  LAND_FILL,
   makeAlbersFit,
+  MAP_BG,
   pointInScreenRing,
-  radarAlpha,
-  radarCss,
   ratioLabel,
+  STATE_BORDER,
+  turboCss,
+  viridisAlt,
 } from "./maputil";
+
+// Offline US basemap geometry is identical across the whole app, so fetch once.
+let _basemapCache: BasemapResp | null = null;
 
 interface ProjectedSector {
   name: string;
@@ -22,6 +28,7 @@ export interface FlightPoint {
   lat: number;
   hazard: boolean;
   id: string;
+  altFt?: number; // cruise altitude -> Viridis marker color (Python-map style)
 }
 
 interface Props {
@@ -62,6 +69,32 @@ function projectTrack(
   return out;
 }
 
+// Project a GeoJSON (Multi)Polygon into screen-space rings (flat [x0,y0,x1,y1,...]).
+function projectGeom(proj: GeoProjection, geom: any): number[][] {
+  const rings: number[][] = [];
+  const addPoly = (poly: number[][][]) => {
+    for (const ring of poly) {
+      const xy: number[] = [];
+      for (const [lon, lat] of ring) {
+        const p = proj([lon, lat]);
+        if (p) xy.push(p[0], p[1]);
+      }
+      if (xy.length >= 6) rings.push(xy);
+    }
+  };
+  if (!geom) return rings;
+  if (geom.type === "Polygon") addPoly(geom.coordinates);
+  else if (geom.type === "MultiPolygon")
+    for (const poly of geom.coordinates) addPoly(poly);
+  return rings;
+}
+
+function tracePath(ctx: CanvasRenderingContext2D, r: number[]) {
+  ctx.moveTo(r[0], r[1]);
+  for (let i = 1; i < r.length / 2; i++) ctx.lineTo(r[i * 2], r[i * 2 + 1]);
+  ctx.closePath();
+}
+
 export function SectorMap({
   sectors,
   band,
@@ -81,6 +114,15 @@ export function SectorMap({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [size, setSize] = useState({ w: 800, h: 600 });
   const [hover, setHover] = useState<HoverState | null>(null);
+  const [basemap, setBasemap] = useState<BasemapResp | null>(_basemapCache);
+
+  useEffect(() => {
+    if (_basemapCache) return;
+    api.basemap().then((b) => {
+      _basemapCache = b;
+      setBasemap(b);
+    });
+  }, []);
 
   useEffect(() => {
     const el = wrapRef.current;
@@ -133,6 +175,18 @@ export function SectorMap({
     return { proj, list };
   }, [bandSectors, size.w, size.h]);
 
+  // Project the offline US basemap once per projection (resize / band change).
+  const base = useMemo<{ nation: number[][]; states: number[][] } | null>(() => {
+    if (!view || !basemap) return null;
+    const nation: number[][] = [];
+    const states: number[][] = [];
+    for (const f of basemap.nation.features)
+      nation.push(...projectGeom(view.proj, f.geometry));
+    for (const f of basemap.states.features)
+      states.push(...projectGeom(view.proj, f.geometry));
+    return { nation, states };
+  }, [view, basemap]);
+
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || !view) return;
@@ -147,7 +201,19 @@ export function SectorMap({
     ctx.clearRect(0, 0, size.w, size.h);
     ctx.lineJoin = "round";
 
-    // 1) sector demand fills
+    // 0) light "carto-positron"-style basemap: water background + CONUS land fill
+    ctx.fillStyle = MAP_BG;
+    ctx.fillRect(0, 0, size.w, size.h);
+    if (base) {
+      ctx.fillStyle = LAND_FILL;
+      for (const r of base.nation) {
+        ctx.beginPath();
+        tracePath(ctx, r);
+        ctx.fill();
+      }
+    }
+
+    // 1) sector demand fills (translucent over the basemap)
     for (const ps of list) {
       const series = demandByName.get(ps.name);
       const d = series ? series[timeIndex] || 0 : 0;
@@ -160,10 +226,22 @@ export function SectorMap({
       ctx.closePath();
       ctx.fillStyle = demandFill(ratio);
       ctx.fill();
-      ctx.lineWidth = ratio >= 1 ? 1.2 : 0.5;
+      ctx.lineWidth = ratio >= 1 ? 1.2 : 0.4;
       ctx.strokeStyle =
-        ratio >= 1 ? "rgba(254,202,202,0.85)" : "rgba(148,163,184,0.18)";
+        ratio >= 1 ? "rgba(190,30,30,0.8)" : "rgba(100,116,139,0.18)";
       ctx.stroke();
+    }
+
+    // 1b) US state borders on top of the choropleth, so the country geography
+    //     reads through the (translucent) demand mosaic — the carto-positron look.
+    if (base) {
+      ctx.lineWidth = 0.6;
+      ctx.strokeStyle = STATE_BORDER;
+      for (const r of base.states) {
+        ctx.beginPath();
+        tracePath(ctx, r);
+        ctx.stroke();
+      }
     }
 
     // 2) weather precipitation — drawn to an offscreen layer as additive blobs
@@ -183,18 +261,19 @@ export function SectorMap({
       off.width = size.w;
       off.height = size.h;
       const octx = off.getContext("2d")!;
-      octx.globalCompositeOperation = "lighter"; // intensities build up
+      // turbo density: layered translucent blobs (source-over keeps true turbo
+      // hues over the light basemap), blurred into a smooth heatmap.
       for (const c of weatherCells) {
         const p = proj([c[1], c[0]]);
         if (!p) continue;
-        octx.fillStyle = radarCss(c[2], radarAlpha(c[2]) * 0.5);
+        octx.fillStyle = turboCss(c[2], 0.4);
         octx.beginPath();
         octx.arc(p[0], p[1], blobR, 0, Math.PI * 2);
         octx.fill();
       }
       ctx.save();
       ctx.filter = `blur(${Math.max(3, cellPx * 1.3)}px)`;
-      ctx.globalAlpha = 0.88;
+      ctx.globalAlpha = 0.82;
       ctx.drawImage(off, 0, 0, size.w, size.h);
       ctx.restore();
     }
@@ -205,8 +284,8 @@ export function SectorMap({
       if (tp.length > 1) {
         ctx.beginPath();
         tp.forEach((p, i) => (i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1])));
-        ctx.lineWidth = 1.6;
-        ctx.strokeStyle = "rgba(56,189,248,0.9)";
+        ctx.lineWidth = 1.8;
+        ctx.strokeStyle = "rgba(2,132,199,0.95)"; // darker cyan for light bg
         ctx.setLineDash([5, 4]);
         ctx.stroke();
         ctx.setLineDash([]);
@@ -219,13 +298,14 @@ export function SectorMap({
       if (rp.length > 1) {
         ctx.beginPath();
         rp.forEach((p, i) => (i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1])));
-        ctx.lineWidth = 2.2;
-        ctx.strokeStyle = "rgba(52,211,153,0.95)";
+        ctx.lineWidth = 2.4;
+        ctx.strokeStyle = "rgba(5,150,105,0.97)"; // darker green for light bg
         ctx.stroke();
       }
     }
 
-    // 4) conflict flight points
+    // 4) flight points — colored by cruise altitude (Viridis), like the Python
+    //    map; hazard flights stay emphasized in red.
     if (flightPoints) {
       for (const fp of flightPoints) {
         const p = proj([fp.lon, fp.lat]);
@@ -236,18 +316,19 @@ export function SectorMap({
           ctx.fillStyle = "#ef4444";
           ctx.fill();
           ctx.lineWidth = 1;
-          ctx.strokeStyle = "rgba(255,255,255,0.9)";
+          ctx.strokeStyle = "rgba(60,0,0,0.55)"; // dark halo, reads on light bg
           ctx.stroke();
-        } else if (denseFlights) {
-          ctx.beginPath();
-          ctx.arc(p[0], p[1], 1.1, 0, Math.PI * 2);
-          ctx.fillStyle = "rgba(148,163,184,0.6)";
-          ctx.fill();
         } else {
+          const r = denseFlights ? 1.5 : 2.4;
           ctx.beginPath();
-          ctx.arc(p[0], p[1], 1.8, 0, Math.PI * 2);
-          ctx.fillStyle = "rgba(251,191,36,0.7)";
+          ctx.arc(p[0], p[1], r, 0, Math.PI * 2);
+          ctx.fillStyle = viridisAlt(fp.altFt ?? 30000);
           ctx.fill();
+          if (!denseFlights) {
+            ctx.lineWidth = 0.6;
+            ctx.strokeStyle = "rgba(30,41,59,0.5)";
+            ctx.stroke();
+          }
         }
       }
     }
@@ -261,13 +342,14 @@ export function SectorMap({
         for (let i = 1; i < ps.pts.length / 2; i++)
           ctx.lineTo(ps.pts[i * 2], ps.pts[i * 2 + 1]);
         ctx.closePath();
-        ctx.lineWidth = 2.2;
-        ctx.strokeStyle = "#38bdf8";
+        ctx.lineWidth = 2.4;
+        ctx.strokeStyle = "#0284c7";
         ctx.stroke();
       }
     }
   }, [
     view,
+    base,
     demandByName,
     timeIndex,
     size,

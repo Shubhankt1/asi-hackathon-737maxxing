@@ -41,6 +41,22 @@ export function getSectorIndex(): SectorIndex {
   return _sectorIndex;
 }
 
+// ---- offline US basemap geometry (lazy, snapshot-independent) ----
+let _basemap: { states: any; nation: any } | null = null;
+export function getBasemap(): { states: any; nation: any } {
+  if (!_basemap) {
+    _basemap = {
+      states: JSON.parse(
+        fs.readFileSync(path.join(DATA_DIR, "us-states.geojson"), "utf8"),
+      ),
+      nation: JSON.parse(
+        fs.readFileSync(path.join(DATA_DIR, "us-nation.geojson"), "utf8"),
+      ),
+    };
+  }
+  return _basemap;
+}
+
 // ---- per-snapshot weather (lazy) ----
 const _wxCache = new Map<string, WeatherCube | null>();
 export function getWeather(snapshot: string): WeatherCube | null {
@@ -136,8 +152,8 @@ export function getAnalysis(snapshot: string): SnapshotAnalysis {
 
 /**
  * Positions of every airborne flight at a given demand step, as compact tuples
- * [lon, lat, band(1=HIGH/0=LOW), inWeather(1/0)]. Used by the "all flights"
- * display mode. Cheap: one pass over the cached tracks.
+ * [lon, lat, band(1=HIGH/0=LOW), inWeather(1/0), altFt]. Used by the "all
+ * flights" display mode. Cheap: one pass over the cached tracks.
  */
 export function getPositionsAtStep(snapshot: string, ti: number): number[][] {
   const a = getAnalysis(snapshot);
@@ -160,6 +176,7 @@ export function getPositionsAtStep(snapshot: string, ti: number): number[][] {
       +pos.lat.toFixed(3),
       band === "HIGH" ? 1 : 0,
       inWx,
+      tr.altFt,
     ]);
   }
   return out;

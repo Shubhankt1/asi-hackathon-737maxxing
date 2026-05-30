@@ -38,7 +38,9 @@
     "postcss-loader": "^8.2.0",
     "style-loader": "^4.0.0",
     "tailwindcss": "^4.1.7",
+    "topojson-client": "^3.1.0",
     "typescript": "^5.9.2",
+    "us-atlas": "^3.0.1",
     "webpack": "^5.101.3",
     "webpack-cli": "^5.1.4",
     "webpack-dev-server": "^5.2.2"

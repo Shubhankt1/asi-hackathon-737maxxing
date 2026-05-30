@@ -103,6 +103,12 @@ export class WeatherCube {
     return [lat, lon];
   }
 
+  /** Composite-reflectivity grid for one strip as a (ROWS*COLS) view. */
+  refcStrip(stripIdx: number): Int8Array {
+    const base = stripIdx * ROWS * COLS;
+    return this.refc.subarray(base, base + ROWS * COLS);
+  }
+
   sample(stripIdx: number, lat: number, lon: number): WxSample | null {
     const c = this.cellOf(lat, lon);
     if (!c) return null;

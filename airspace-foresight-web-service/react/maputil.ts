@@ -56,19 +56,88 @@ const RED = [239, 68, 68];
 const DEEPRED = [185, 28, 28];
 
 /**
- * Fill color for a demand/capacity ratio. Empty sectors stay near-transparent
- * slate; load ramps green -> amber -> orange -> red as it approaches and
- * exceeds capacity.
+ * Fill color for a demand/capacity ratio over the light "positron" basemap.
+ * Empty sectors stay nearly transparent so land/state borders show through;
+ * load ramps green -> amber -> orange -> red as it approaches and exceeds
+ * capacity (translucent so the basemap remains visible).
  */
 export function demandFill(ratio: number): string {
-  if (ratio <= 0) return "rgba(51,65,85,0.28)";
+  if (ratio <= 0) return "rgba(120,135,160,0.07)";
   let rgb: number[];
   if (ratio < 0.7) rgb = mix(GREEN, AMBER, ratio / 0.7);
   else if (ratio < 1.0) rgb = mix(AMBER, ORANGE, (ratio - 0.7) / 0.3);
   else if (ratio < 1.4) rgb = mix(ORANGE, RED, (ratio - 1.0) / 0.4);
   else rgb = mix(RED, DEEPRED, Math.min(1, (ratio - 1.4) / 0.6));
-  const alpha = ratio >= 1 ? 0.85 : 0.5 + 0.3 * (ratio / 1.0);
+  const alpha = ratio >= 1 ? 0.7 : 0.28 + 0.32 * (ratio / 1.0);
   return `rgba(${rgb[0] | 0},${rgb[1] | 0},${rgb[2] | 0},${alpha.toFixed(3)})`;
+}
+
+// ---- light "carto-positron"-style basemap palette ----
+export const MAP_BG = "#e7edf3"; // water / canvas background
+export const LAND_FILL = "#f6f7f9"; // CONUS landmass (slightly lighter than water)
+export const STATE_BORDER = "rgba(90,103,122,0.6)"; // state outlines
+
+// Generic stop-table interpolation: stops are [t in 0..1, [r,g,b]].
+function colorFromStops(stops: [number, number[]][], t: number): number[] {
+  const x = t <= 0 ? 0 : t >= 1 ? 1 : t;
+  if (x <= stops[0][0]) return stops[0][1];
+  for (let i = 1; i < stops.length; i++) {
+    if (x <= stops[i][0]) {
+      const [t0, c0] = stops[i - 1];
+      const [t1, c1] = stops[i];
+      return mix(c0, c1, (x - t0) / (t1 - t0));
+    }
+  }
+  return stops[stops.length - 1][1];
+}
+
+// Plotly "turbo" colorscale (weather density heatmap, to match the Python map).
+const TURBO_STOPS: [number, number[]][] = [
+  [0.0, [48, 18, 59]],
+  [0.07, [65, 69, 171]],
+  [0.13, [57, 118, 233]],
+  [0.2, [29, 168, 255]],
+  [0.25, [24, 193, 224]],
+  [0.33, [38, 212, 167]],
+  [0.4, [108, 229, 107]],
+  [0.5, [176, 237, 55]],
+  [0.58, [225, 225, 29]],
+  [0.66, [252, 191, 28]],
+  [0.75, [253, 140, 39]],
+  [0.83, [238, 86, 38]],
+  [0.91, [203, 42, 38]],
+  [1.0, [122, 4, 3]],
+];
+
+/**
+ * Turbo color for a dBZ value over [20, 60] dBZ. We start partway up the ramp
+ * (skip turbo's near-black low end) so light precip reads as blue/green on the
+ * light basemap rather than as dark smudges — a vivid heatmap like the Python map.
+ */
+export function turboCss(dbz: number, alpha = 0.7): string {
+  const t = (dbz - 20) / 40;
+  const c = colorFromStops(TURBO_STOPS, 0.18 + 0.82 * (t < 0 ? 0 : t > 1 ? 1 : t));
+  return `rgba(${c[0] | 0},${c[1] | 0},${c[2] | 0},${alpha})`;
+}
+
+// Viridis colorscale (flight markers by cruise altitude, to match the Python map).
+const VIRIDIS_STOPS: [number, number[]][] = [
+  [0.0, [68, 1, 84]],
+  [0.1, [72, 40, 120]],
+  [0.2, [62, 74, 137]],
+  [0.3, [49, 104, 142]],
+  [0.4, [38, 130, 142]],
+  [0.5, [31, 158, 137]],
+  [0.6, [53, 183, 121]],
+  [0.7, [110, 206, 88]],
+  [0.8, [181, 222, 43]],
+  [1.0, [253, 231, 37]],
+];
+
+/** Viridis color for a cruise altitude, mapped over [0, 45000] ft. */
+export function viridisAlt(altFt: number): string {
+  const c = colorFromStops(VIRIDIS_STOPS, altFt / 45000);
+  return `rgb(${c[0] | 0},${c[1] | 0},${c[2] | 0})`;
 }
 
 // Reflectivity color ramp (NWS-style), keyed by dBZ.
