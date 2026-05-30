@@ -26,6 +26,11 @@ function fmtUTC(iso?: string): string {
     d.getUTCMinutes(),
   ).padStart(2, "0")}Z`;
 }
+/** FlightAware live-tracking URL for a flight ident (airline code or tail #). */
+function flightAwareUrl(ident: string): string {
+  return `https://flightaware.com/live/flight/${encodeURIComponent(ident.trim())}`;
+}
+
 function fmtDayUTC(iso?: string): string {
   if (!iso) return "";
   return new Date(iso).toLocaleDateString("en-US", {
@@ -482,6 +487,15 @@ const App = () => {
                 >
                   {rerouteLoading ? "routing…" : "↳ Reroute around weather"}
                 </button>
+                <a
+                  href={flightAwareUrl(selFlight.flightNumber)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="rounded border border-sky-700 bg-sky-950/50 px-2 py-1 text-[11px] font-medium text-sky-300 hover:bg-sky-900/50"
+                  title={`Track ${selFlight.flightNumber} on FlightAware`}
+                >
+                  FlightAware ↗
+                </a>
                 <button
                   className="text-[11px] text-slate-500 hover:text-slate-300"
                   onClick={() => setSelectedFlight(null)}
@@ -626,10 +640,10 @@ const App = () => {
                 )}
                 <ul className="space-y-1">
                   {conflicts.slice(0, 80).map((c) => (
-                    <li key={c.id}>
+                    <li key={c.id} className="flex items-stretch gap-1">
                       <button
                         onClick={() => jumpToConflict(c)}
-                        className={`flex w-full items-center gap-2 rounded-md border px-3 py-2 text-left text-xs transition ${
+                        className={`flex flex-1 items-center gap-2 rounded-md border px-3 py-2 text-left text-xs transition ${
                           selectedFlight === c.id
                             ? "border-fuchsia-500 bg-fuchsia-950/30"
                             : "border-slate-800 bg-slate-800/40 hover:border-slate-600"
@@ -651,6 +665,15 @@ const App = () => {
                           {c.maxDbz}
                         </span>
                       </button>
+                      <a
+                        href={flightAwareUrl(c.flightNumber)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        title={`Track ${c.flightNumber} on FlightAware`}
+                        className="flex items-center rounded-md border border-slate-800 bg-slate-800/40 px-2 text-xs text-slate-500 hover:border-sky-600 hover:text-sky-300"
+                      >
+                        ↗
+                      </a>
                     </li>
                   ))}
                 </ul>
