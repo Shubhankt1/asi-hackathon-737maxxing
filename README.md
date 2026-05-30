@@ -1,3 +1,5 @@
+<img src="assets/logo.svg" alt="Airspace Foresight" height="64" />
+
 # Airspace Foresight
 
 An integrated **National Airspace System (NAS) risk forecast** dashboard for the
