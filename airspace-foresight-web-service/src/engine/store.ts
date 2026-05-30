@@ -121,6 +121,37 @@ export function getAnalysis(snapshot: string): SnapshotAnalysis {
   return a;
 }
 
+/**
+ * Positions of every airborne flight at a given demand step, as compact tuples
+ * [lon, lat, band(1=HIGH/0=LOW), inWeather(1/0)]. Used by the "all flights"
+ * display mode. Cheap: one pass over the cached tracks.
+ */
+export function getPositionsAtStep(snapshot: string, ti: number): number[][] {
+  const a = getAnalysis(snapshot);
+  const cube = getWeather(snapshot);
+  const tiC = Math.max(0, Math.min(a.nSteps - 1, ti));
+  const t = a.times[tiC];
+  const out: number[][] = [];
+  for (const tr of a.tracks) {
+    if (!tr.airborneAt(t)) continue;
+    const pos = tr.positionAt(t);
+    if (!pos) continue;
+    const band = bandForAltitude(tr.altFt);
+    let inWx = 0;
+    if (cube) {
+      const s = cube.sample(cube.stripForTime(t), pos.lat, pos.lon);
+      if (s && s.refc >= 40 && s.retop >= tr.altFt) inWx = 1;
+    }
+    out.push([
+      +pos.lon.toFixed(3),
+      +pos.lat.toFixed(3),
+      band === "HIGH" ? 1 : 0,
+      inWx,
+    ]);
+  }
+  return out;
+}
+
 function buildAnalysis(snapshot: string): SnapshotAnalysis {
   const t0 = Date.now();
   const routes = loadRoutes(snapshot);

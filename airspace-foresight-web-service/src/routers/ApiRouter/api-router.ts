@@ -19,6 +19,7 @@ import { ConflictsControllerController } from "./controllers/conflicts-controlle
 import { RecommendationsControllerController } from "./controllers/recommendations-controller.js";
 import { RerouteControllerController } from "./controllers/reroute-controller.js";
 import { WhatifControllerController } from "./controllers/whatif-controller.js";
+import { PositionsControllerController } from "./controllers/positions-controller.js";
 export interface ApiRouterState {
   funnyJokeClient: IFunnyJokeClient;
 }
@@ -50,7 +51,9 @@ export class ApiWebRouter extends WebRouter<
 
         RerouteControllerController,
 
-        WhatifControllerController,],
+        WhatifControllerController,
+
+        PositionsControllerController,],
       middleware: [
         SwizzyRequestMiddleware,
         RequestIdMiddleware,

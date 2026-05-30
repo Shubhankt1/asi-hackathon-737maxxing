@@ -16,6 +16,7 @@ import { PreparedTrack, posOnTrack, prepareTrack } from "./maputil";
 
 type Band = "HIGH" | "LOW";
 type Tab = "hotspots" | "weather" | "actions";
+type FlightMode = "conflicts" | "all" | "weather" | "off";
 
 function fmtUTC(iso?: string): string {
   if (!iso) return "--:--";
@@ -60,6 +61,15 @@ const App = () => {
   const [reroute, setReroute] = useState<RerouteResp | null>(null);
   const [rerouteLoading, setRerouteLoading] = useState(false);
   const [showWeather, setShowWeather] = useState(true);
+  const [flightMode, setFlightMode] = useState<FlightMode>(
+    (["conflicts", "all", "weather", "off"] as const).includes(
+      params.get("flights") as any,
+    )
+      ? (params.get("flights") as FlightMode)
+      : "conflicts",
+  );
+  const [allPositions, setAllPositions] = useState<number[][] | null>(null);
+  const posCache = useRef<Map<number, number[][]>>(new Map());
   const [whatif, setWhatif] = useState<WhatIfResp | null>(null);
   const [whatifOn, setWhatifOn] = useState(params.get("whatif") === "1");
   const [tab, setTab] = useState<Tab>(
@@ -96,6 +106,8 @@ const App = () => {
     setWx(null);
     setRecs(null);
     setWhatif(null);
+    posCache.current.clear();
+    setAllPositions(null);
     Promise.all([
       api.overview(snapshot),
       api.demand(snapshot),
@@ -187,6 +199,25 @@ const App = () => {
     };
   }, [snapshot, stripIdx, overview?.hasWeather]);
 
+  // all-airborne positions for the current step (fetched + cached) when in
+  // "all flights" mode
+  useEffect(() => {
+    if (flightMode !== "all" || !snapshot) return;
+    const cached = posCache.current.get(timeIndex);
+    if (cached) {
+      setAllPositions(cached);
+      return;
+    }
+    let cancelled = false;
+    api.positions(snapshot, timeIndex).then((r) => {
+      posCache.current.set(timeIndex, r.flights);
+      if (!cancelled) setAllPositions(r.flights);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [flightMode, snapshot, timeIndex]);
+
   // prepared tracks for conflict flights (for client-side animation)
   const preparedTracks = useMemo(() => {
     const m = new Map<string, PreparedTrack>();
@@ -198,7 +229,17 @@ const App = () => {
   const tMs = overview ? Date.parse(overview.times[timeIndex]) : 0;
 
   const flightPoints = useMemo<FlightPoint[]>(() => {
-    if (!showWeather) return [];
+    if (flightMode === "off") return [];
+    if (flightMode === "all") {
+      if (!allPositions) return [];
+      return allPositions.map((p, i) => ({
+        lon: p[0],
+        lat: p[1],
+        hazard: p[3] === 1,
+        id: "a" + i,
+      }));
+    }
+    // conflicts / weather modes: animate the weather-conflict flights
     const out: FlightPoint[] = [];
     for (const c of conflicts) {
       const tr = preparedTracks.get(c.id);
@@ -208,14 +249,21 @@ const App = () => {
       const hazard = c.intervals.some(
         (iv) => timeIndex >= iv.startIndex && timeIndex <= iv.endIndex,
       );
+      if (flightMode === "weather" && !hazard) continue;
       out.push({ lon: p[0], lat: p[1], hazard, id: c.id });
     }
     return out;
-  }, [conflicts, preparedTracks, tMs, timeIndex, showWeather]);
+  }, [flightMode, allPositions, conflicts, preparedTracks, tMs, timeIndex]);
 
+  // "in weather now" KPI is mode-independent (derived from conflict intervals)
   const nInHazardNow = useMemo(
-    () => flightPoints.filter((f) => f.hazard).length,
-    [flightPoints],
+    () =>
+      conflicts.filter((c) =>
+        c.intervals.some(
+          (iv) => timeIndex >= iv.startIndex && timeIndex <= iv.endIndex,
+        ),
+      ).length,
+    [conflicts, timeIndex],
   );
 
   const selFlight = conflicts.find((c) => c.id === selectedFlight) || null;
@@ -334,6 +382,7 @@ const App = () => {
             weatherCells={wx?.cells}
             cellDeg={wx?.cellDeg}
             flightPoints={flightPoints}
+            denseFlights={flightMode === "all"}
             selectedTrack={selectedTrack}
             rerouteTrack={reroute?.cleared ? reroute.reroute : null}
           />
@@ -374,6 +423,17 @@ const App = () => {
             >
               {whatifOn ? "△ what-if: delays applied" : "△ what-if delays"}
             </button>
+            <select
+              value={flightMode}
+              onChange={(e) => setFlightMode(e.target.value as FlightMode)}
+              className="rounded-md border border-slate-700 bg-slate-800/90 px-2 py-1 text-xs text-slate-200"
+              title="Which flights to plot on the map"
+            >
+              <option value="conflicts">✈ flights: weather conflicts</option>
+              <option value="all">✈ flights: all airborne</option>
+              <option value="weather">✈ flights: in weather now</option>
+              <option value="off">✈ flights: off</option>
+            </select>
             <Legend />
           </div>
           {whatifOn && whatif && (
