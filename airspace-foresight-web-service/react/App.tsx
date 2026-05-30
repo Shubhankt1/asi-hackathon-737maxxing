@@ -66,6 +66,9 @@ const App = () => {
   const [selectedFlight, setSelectedFlight] = useState<string | null>(null);
   const [reroute, setReroute] = useState<RerouteResp | null>(null);
   const [rerouteLoading, setRerouteLoading] = useState(false);
+  const [rerouteAlgo, setRerouteAlgo] = useState<"thetastar" | "astar">(
+    "thetastar",
+  );
   const [showWeather, setShowWeather] = useState(true);
   const [flightMode, setFlightMode] = useState<FlightMode>(
     (["conflicts", "all", "weather", "off"] as const).includes(
@@ -142,7 +145,12 @@ const App = () => {
           setShowWeather(true);
           setBand(c.altFt >= 35000 ? "HIGH" : "LOW");
           if (c.intervals[0]) setTimeIndex(c.intervals[0].startIndex);
-          if (params.get("rr")) api.reroute(snapshot, c.id).then(setReroute);
+          if (params.get("rr")) {
+            const rrT = c.intervals[0]
+              ? Date.parse(ov.times[c.intervals[0].startIndex])
+              : c.t0;
+            api.reroute(snapshot, c.id, "thetastar", rrT).then(setReroute);
+          }
         }
       }
     });
@@ -243,6 +251,7 @@ const App = () => {
         lat: p[1],
         hazard: p[3] === 1,
         id: "a" + i,
+        altFt: p[4],
       }));
     }
     // conflicts / weather modes: animate the weather-conflict flights
@@ -256,7 +265,7 @@ const App = () => {
         (iv) => timeIndex >= iv.startIndex && timeIndex <= iv.endIndex,
       );
       if (flightMode === "weather" && !hazard) continue;
-      out.push({ lon: p[0], lat: p[1], hazard, id: c.id });
+      out.push({ lon: p[0], lat: p[1], hazard, id: c.id, altFt: c.altFt });
     }
     return out;
   }, [flightMode, allPositions, conflicts, preparedTracks, tMs, timeIndex]);
@@ -285,7 +294,7 @@ const App = () => {
   function requestReroute() {
     if (!selFlight || !snapshot) return;
     setRerouteLoading(true);
-    api.reroute(snapshot, selFlight.id).then((r) => {
+    api.reroute(snapshot, selFlight.id, rerouteAlgo, tMs).then((r) => {
       setReroute(r);
       setRerouteLoading(false);
     });
@@ -394,7 +403,7 @@ const App = () => {
             flightPoints={flightPoints}
             denseFlights={flightMode === "all"}
             selectedTrack={selectedTrack}
-            rerouteTrack={reroute?.cleared ? reroute.reroute : null}
+            rerouteTrack={reroute?.reroute?.lats?.length ? reroute.reroute : null}
           />
           <div className="absolute left-3 top-3 flex flex-col gap-2">
             <div className="flex overflow-hidden rounded-md border border-slate-700 text-xs">
@@ -480,6 +489,17 @@ const App = () => {
                 {selFlight.hazardMinutes} min · max {selFlight.maxDbz} dBZ
               </div>
               <div className="mt-2 flex items-center gap-2">
+                <select
+                  value={rerouteAlgo}
+                  onChange={(e) =>
+                    setRerouteAlgo(e.target.value as "thetastar" | "astar")
+                  }
+                  className="rounded border border-slate-700 bg-slate-800 px-1.5 py-1 text-[11px] text-slate-200"
+                  title="Reroute algorithm"
+                >
+                  <option value="thetastar">Theta* (smooth)</option>
+                  <option value="astar">A* (grid)</option>
+                </select>
                 <button
                   className="rounded border border-emerald-700 bg-emerald-950/50 px-2 py-1 text-[11px] font-medium text-emerald-300 hover:bg-emerald-900/50 disabled:opacity-50"
                   onClick={requestReroute}
@@ -510,9 +530,10 @@ const App = () => {
                       <span className="font-mono text-emerald-200">
                         +{reroute.addedNm} NM / +{reroute.addedMin} min
                       </span>{" "}
-                      lateral deviation ({reroute.offsetNm} NM{" "}
-                      {reroute.side > 0 ? "right" : "left"}) clears the cell —
-                      green path.
+                      {reroute.algorithm === "astar"
+                        ? "A* (grid)"
+                        : "Theta* (smooth)"}{" "}
+                      reroute · {reroute.waypoints} waypoints — green path.
                     </span>
                   ) : (
                     <span className="text-amber-300">{reroute.message}</span>
@@ -950,12 +971,12 @@ function Legend() {
       </div>
       <div className="flex items-center gap-2">
         <span className="mr-1 text-slate-500">weather</span>
-        <span className="text-[9px] text-slate-500">15</span>
+        <span className="text-[9px] text-slate-500">20</span>
         <span
           className="inline-block h-2.5 w-24 rounded-sm"
           style={{
             background:
-              "linear-gradient(to right, rgb(56,142,110), rgb(40,190,90), rgb(245,222,60), rgb(247,165,45), rgb(222,40,48), rgb(224,80,235))",
+              "linear-gradient(to right, rgb(48,18,59), rgb(57,118,233), rgb(29,168,255), rgb(38,212,167), rgb(108,229,107), rgb(176,237,55), rgb(252,191,28), rgb(238,86,38), rgb(122,4,3))",
           }}
         />
         <span className="text-[9px] text-slate-500">60+ dBZ</span>
@@ -963,6 +984,18 @@ function Legend() {
           <span className="inline-block h-2 w-2 rounded-full bg-red-500" />
           flt in wx
         </span>
+      </div>
+      <div className="flex items-center gap-2">
+        <span className="mr-1 text-slate-500">altitude</span>
+        <span className="text-[9px] text-slate-500">0</span>
+        <span
+          className="inline-block h-2.5 w-24 rounded-sm"
+          style={{
+            background:
+              "linear-gradient(to right, rgb(68,1,84), rgb(49,104,142), rgb(31,158,137), rgb(110,206,88), rgb(253,231,37))",
+          }}
+        />
+        <span className="text-[9px] text-slate-500">FL450</span>
       </div>
     </div>
   );

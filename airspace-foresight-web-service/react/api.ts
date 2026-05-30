@@ -118,6 +118,8 @@ export interface RerouteResp {
   origin: string;
   dest: string;
   altFt: number;
+  algorithm: string;
+  waypoints: number;
   cleared: boolean;
   side: number;
   offsetNm: number;
@@ -144,8 +146,8 @@ export interface WhatIfResp {
   sectors: { name: string; band: "HIGH" | "LOW"; capacity: number; demand: number[] }[];
 }
 
-// flight position tuple: [lon, lat, band(1=HIGH/0=LOW), inWeather(1/0)]
-export type PosTuple = [number, number, number, number];
+// flight position tuple: [lon, lat, band(1=HIGH/0=LOW), inWeather(1/0), altFt]
+export type PosTuple = [number, number, number, number, number];
 export interface PositionsResp {
   snapshot: string;
   t: number;
@@ -183,6 +185,12 @@ export interface SectorsResp {
   sectors: SectorGeom[];
 }
 
+// GeoJSON FeatureCollections (lon/lat) for the offline US basemap.
+export interface BasemapResp {
+  states: { type: string; features: any[] };
+  nation: { type: string; features: any[] };
+}
+
 export interface DemandSeries {
   name: string;
   band: "HIGH" | "LOW";
@@ -208,6 +216,7 @@ export const api = {
   overview: (snapshot: string) =>
     getJson<Overview>(`api/overview?snapshot=${encodeURIComponent(snapshot)}`),
   sectors: () => getJson<SectorsResp>("api/sectors"),
+  basemap: () => getJson<BasemapResp>("api/basemap"),
   demand: (snapshot: string) =>
     getJson<DemandResp>(`api/demand?snapshot=${encodeURIComponent(snapshot)}`),
   conflicts: (snapshot: string) =>
@@ -222,9 +231,9 @@ export const api = {
     getJson<RecommendationsResp>(
       `api/recommendations?snapshot=${encodeURIComponent(snapshot)}`,
     ),
-  reroute: (snapshot: string, id: string) =>
+  reroute: (snapshot: string, id: string, algo = "thetastar", t?: number) =>
     getJson<RerouteResp>(
-      `api/reroute?snapshot=${encodeURIComponent(snapshot)}&id=${encodeURIComponent(id)}`,
+      `api/reroute?snapshot=${encodeURIComponent(snapshot)}&id=${encodeURIComponent(id)}&algo=${encodeURIComponent(algo)}${t != null ? `&t=${t}` : ""}`,
     ),
   whatif: (snapshot: string) =>
     getJson<WhatIfResp>(`api/whatif?snapshot=${encodeURIComponent(snapshot)}`),

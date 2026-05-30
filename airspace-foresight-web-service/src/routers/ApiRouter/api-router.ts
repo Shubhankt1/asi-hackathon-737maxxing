@@ -13,6 +13,7 @@ import { IFunnyJokeClient } from "../../client/index.js";
 import { SnapshotsControllerController } from "./controllers/snapshots-controller.js";
 import { OverviewControllerController } from "./controllers/overview-controller.js";
 import { SectorsControllerController } from "./controllers/sectors-controller.js";
+import { BasemapControllerController } from "./controllers/basemap-controller.js";
 import { DemandControllerController } from "./controllers/demand-controller.js";
 import { WeatherControllerController } from "./controllers/weather-controller.js";
 import { ConflictsControllerController } from "./controllers/conflicts-controller.js";
@@ -41,6 +42,7 @@ export class ApiWebRouter extends WebRouter<
         SnapshotsControllerController,
         OverviewControllerController,
         SectorsControllerController,
+        BasemapControllerController,
         DemandControllerController,
 
         WeatherControllerController,

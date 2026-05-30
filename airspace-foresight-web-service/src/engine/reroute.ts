@@ -1,20 +1,14 @@
-// Lateral reroute geometry: for a weather-conflicted flight, bulge the
-// hazardous portion of its path sideways until it samples clear of convective
-// hazard. A geometric heuristic (not an optimal solver), but it produces a
-// realistic deviation with quantified extra distance/time for the viz.
+// Weather-aware reroute: an A*/Theta* search around convective weather, a
+// server-side port of the reference router in airspace-foresight-py
+// (rerouting.AStarRouter + the any-angle Theta* in routes_wx_plot.py). For a
+// selected flight it routes from the aircraft's position at the current time to
+// its destination, avoiding cells of composite reflectivity >= 40 dBZ, and
+// reports the extra distance/time vs. the planned remaining leg.
 
 import { getAnalysis, getWeather } from "./store.js";
-import { FlightTrack } from "./trajectory.js";
-import { WeatherCube } from "./weather.js";
-
-const STEP_MS = 5 * 60 * 1000;
-const NM_PER_DEG = 60;
-
-interface Pt {
-  lat: number;
-  lon: number;
-  t: number;
-}
+import { getHazardGrid, HAZARD_DBZ } from "./hazardGrid.js";
+import { haversineNm } from "./geo.js";
+import { ALGO_LABELS, getRouter, LatLon } from "./router.js";
 
 export interface RerouteResult {
   found: boolean;
@@ -23,25 +17,16 @@ export interface RerouteResult {
   origin: string;
   dest: string;
   altFt: number;
+  algorithm: string;
+  waypoints: number;
   cleared: boolean;
-  side: number; // +1 / -1
-  offsetNm: number;
+  side: number; // retained for response-shape compatibility (unused by A*/Theta*)
+  offsetNm: number; // retained for response-shape compatibility
   addedNm: number;
   addedMin: number;
   original: { lats: number[]; lons: number[] };
   reroute: { lats: number[]; lons: number[] };
   message: string;
-}
-
-function haversineNm(a: number, b: number, c: number, d: number): number {
-  const R = 3440.065;
-  const DEG = Math.PI / 180;
-  const dLat = (c - a) * DEG;
-  const dLon = (d - b) * DEG;
-  const h =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(a * DEG) * Math.cos(c * DEG) * Math.sin(dLon / 2) ** 2;
-  return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
 }
 
 function pathLenNm(lats: number[], lons: number[]): number {
@@ -51,25 +36,47 @@ function pathLenNm(lats: number[], lons: number[]): number {
   return s;
 }
 
-function densify(tr: FlightTrack): Pt[] {
-  const span = tr.t1 - tr.t0;
-  const pts: Pt[] = [];
-  // ensure at least a handful of points even for short legs
-  const step = Math.min(STEP_MS, Math.max(60000, span / 40));
-  for (let t = tr.t0; t <= tr.t1; t += step) {
-    const frac = span > 0 ? (t - tr.t0) / span : 0;
-    const p = tr.positionAtFrac(frac);
-    pts.push({ lat: p.lat, lon: p.lon, t });
+/** Remaining planned leg from `start` to the destination, following the flight's
+ *  waypoints past the current along-route fraction (used as the added-distance
+ *  baseline). */
+function remainingLeg(
+  lats: number[],
+  lons: number[],
+  start: LatLon,
+  fracDist: number,
+): { lats: number[]; lons: number[] } {
+  const n = lats.length;
+  // cumulative great-circle distance at each waypoint
+  let total = 0;
+  const cum = new Array<number>(n);
+  cum[0] = 0;
+  for (let i = 1; i < n; i++) {
+    total += haversineNm(lats[i - 1], lons[i - 1], lats[i], lons[i]);
+    cum[i] = total;
   }
-  return pts;
+  const target = Math.max(0, Math.min(1, fracDist)) * total;
+  const outLats = [start[0]];
+  const outLons = [start[1]];
+  for (let i = 0; i < n; i++) {
+    if (cum[i] > target + 1e-6) {
+      outLats.push(lats[i]);
+      outLons.push(lons[i]);
+    }
+  }
+  // ensure the destination is the final point
+  if (outLats[outLats.length - 1] !== lats[n - 1]) {
+    outLats.push(lats[n - 1]);
+    outLons.push(lons[n - 1]);
+  }
+  return { lats: outLats, lons: outLons };
 }
 
-function hazardAt(cube: WeatherCube, pt: Pt, altFt: number): boolean {
-  const smp = cube.sample(cube.stripForTime(pt.t), pt.lat, pt.lon);
-  return !!smp && smp.refc >= 40 && smp.retop >= altFt;
-}
-
-export function getReroute(snapshot: string, id: string): RerouteResult | null {
+export function getReroute(
+  snapshot: string,
+  id: string,
+  algo = "thetastar",
+  tMs = 0,
+): RerouteResult | null {
   const a = getAnalysis(snapshot);
   const cube = getWeather(snapshot);
   if (!cube) return null;
@@ -80,92 +87,68 @@ export function getReroute(snapshot: string, id: string): RerouteResult | null {
   );
   if (!tr) return null;
   const f = tr.flight;
+  const n = f.lats.length;
+  if (n < 2) return null;
 
-  const base = (msg: string, extra: Partial<RerouteResult> = {}): RerouteResult => ({
+  // start = aircraft position at tMs (origin if not airborne then); goal = dest
+  let start: LatLon;
+  let fracDist: number;
+  const t = tMs || tr.t0;
+  if (tr.airborneAt(t)) {
+    const p = tr.positionAt(t)!;
+    start = [p.lat, p.lon];
+    const span = tr.t1 - tr.t0;
+    fracDist = span > 0 ? (t - tr.t0) / span : 0;
+  } else {
+    start = [f.lats[0], f.lons[0]];
+    fracDist = 0;
+  }
+  const goal: LatLon = [f.lats[n - 1], f.lons[n - 1]];
+
+  const grid = getHazardGrid(snapshot, cube.stripForTime(t));
+  if (!grid) return null;
+
+  const path = getRouter(algo)(start, goal, grid);
+  const lats = path.map((p) => p[0]);
+  const lons = path.map((p) => p[1]);
+
+  const original = remainingLeg(f.lats, f.lons, start, fracDist);
+  const origLenNm = pathLenNm(original.lats, original.lons);
+  const newLenNm = pathLenNm(lats, lons);
+  const addedNm = Math.max(0, newLenNm - origLenNm);
+  const speed = f.cruise_speed_kt || 450;
+
+  // cleared = no routed waypoint lands in a >= 40 dBZ coarse cell
+  let cleared = true;
+  for (const [plat, plon] of path) {
+    const [ci, cj] = grid.latlonToCell(plat, plon);
+    if (grid.dbzAt(ci, cj) >= HAZARD_DBZ) {
+      cleared = false;
+      break;
+    }
+  }
+
+  const label = ALGO_LABELS[algo] ?? algo;
+  const message = cleared
+    ? `${label} routes clear of the weather`
+    : `Weather boxes in ${f.flight_number} — straight-line fallback; consider altitude change / delay`;
+
+  return {
     found: true,
     id,
     flightNumber: f.flight_number,
     origin: f.origin_airport_icao,
     dest: f.destination_airport_icao,
     altFt: tr.altFt,
-    cleared: false,
+    algorithm: algo,
+    waypoints: path.length,
+    cleared,
     side: 0,
     offsetNm: 0,
-    addedNm: 0,
-    addedMin: 0,
-    original: { lats: [], lons: [] },
-    reroute: { lats: [], lons: [] },
-    message: msg,
-    ...extra,
-  });
-
-  const pts = densify(tr);
-  const origLats = pts.map((p) => p.lat);
-  const origLons = pts.map((p) => p.lon);
-  const original = { lats: origLats, lons: origLons };
-
-  // hazardous indices
-  const haz = pts.map((p) => hazardAt(cube, p, tr.altFt));
-  let a0 = haz.indexOf(true);
-  if (a0 < 0) return base("No hazard found along route", { original });
-  let b0 = haz.lastIndexOf(true);
-  // pad the span a little so the deviation starts/ends in the clear
-  a0 = Math.max(1, a0 - 2);
-  b0 = Math.min(pts.length - 2, b0 + 2);
-
-  // chord anchors (kept fixed); perpendicular direction in local E/N
-  const A = pts[a0 - 1];
-  const B = pts[b0 + 1];
-  const midLat = (A.lat + B.lat) / 2;
-  const cosLat = Math.cos((midLat * Math.PI) / 180) || 1;
-  const east = (B.lon - A.lon) * cosLat;
-  const north = B.lat - A.lat;
-  const clen = Math.hypot(east, north) || 1;
-  // unit perpendicular (E, N)
-  const pE = -north / clen;
-  const pN = east / clen;
-
-  const speed = f.cruise_speed_kt || 450;
-  const origLenNm = pathLenNm(origLats, origLons);
-
-  for (let offset = 20; offset <= 200; offset += 20) {
-    for (const side of [1, -1]) {
-      const lats = origLats.slice();
-      const lons = origLons.slice();
-      for (let k = a0; k <= b0; k++) {
-        // triangular/sine bump: 0 at ends, max at middle
-        const w = Math.sin((Math.PI * (k - a0 + 0.5)) / (b0 - a0 + 1));
-        const dNm = side * offset * w;
-        const dNorthNm = pN * dNm;
-        const dEastNm = pE * dNm;
-        lats[k] = pts[k].lat + dNorthNm / NM_PER_DEG;
-        lons[k] =
-          pts[k].lon + dEastNm / (NM_PER_DEG * Math.max(0.2, Math.cos((pts[k].lat * Math.PI) / 180)));
-      }
-      // re-check hazard along the deviated path at the same times
-      let clear = true;
-      for (let k = a0; k <= b0; k++) {
-        if (hazardAt(cube, { lat: lats[k], lon: lons[k], t: pts[k].t }, tr.altFt)) {
-          clear = false;
-          break;
-        }
-      }
-      if (clear) {
-        const newLen = pathLenNm(lats, lons);
-        const addedNm = Math.max(0, newLen - origLenNm);
-        return base("Lateral deviation clears the cell", {
-          cleared: true,
-          side,
-          offsetNm: offset,
-          addedNm: Math.round(addedNm),
-          addedMin: Math.round((addedNm / speed) * 60),
-          original,
-          reroute: { lats, lons },
-        });
-      }
-    }
-  }
-  return base("No lateral deviation within 200 NM clears it — consider altitude change / delay", {
+    addedNm: Math.round(addedNm),
+    addedMin: Math.round((addedNm / speed) * 60),
     original,
-  });
+    reroute: { lats, lons },
+    message,
+  };
 }
