@@ -737,6 +737,8 @@ const App = () => {
             {tab === "actions" && (
               <ActionsPanel
                 recs={recs}
+                selectedFlight={selectedFlight}
+                selectedSector={selected}
                 onWeatherRec={(id) => {
                   const c = conflicts.find((x) => x.id === id);
                   if (c) jumpToConflict(c);
@@ -806,10 +808,14 @@ const App = () => {
 
 function ActionsPanel({
   recs,
+  selectedFlight,
+  selectedSector,
   onWeatherRec,
   onSectorRec,
 }: {
   recs: RecommendationsResp | null;
+  selectedFlight: string | null;
+  selectedSector: string | null;
   onWeatherRec: (id: string) => void;
   onSectorRec: (name: string) => void;
 }) {
@@ -854,7 +860,11 @@ function ActionsPanel({
           <li key={w.id}>
             <button
               onClick={() => onWeatherRec(w.id)}
-              className="flex w-full items-center gap-2 rounded-md border border-slate-800 bg-slate-800/40 px-3 py-2 text-left text-xs hover:border-slate-600"
+              className={`flex w-full items-center gap-2 rounded-md border px-3 py-2 text-left text-xs transition ${
+                selectedFlight === w.id
+                  ? "border-fuchsia-500 bg-fuchsia-950/30"
+                  : "border-slate-800 bg-slate-800/40 hover:border-slate-600"
+              }`}
             >
               <span className="font-mono text-slate-200">{w.flightNumber}</span>
               <span className="text-slate-500">
@@ -885,7 +895,11 @@ function ActionsPanel({
           <li key={r.sector}>
             <button
               onClick={() => onSectorRec(r.sector)}
-              className="flex w-full items-center gap-2 rounded-md border border-slate-800 bg-slate-800/40 px-3 py-2 text-left text-xs hover:border-slate-600"
+              className={`flex w-full items-center gap-2 rounded-md border px-3 py-2 text-left text-xs transition ${
+                selectedSector === r.sector
+                  ? "border-sky-500 bg-sky-950/40"
+                  : "border-slate-800 bg-slate-800/40 hover:border-slate-600"
+              }`}
             >
               <span className="font-mono text-slate-200">{r.sector}</span>
               <span className="text-slate-500">{r.peakTime.slice(11, 16)}Z</span>
