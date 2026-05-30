@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { GeoProjection } from "d3-geo";
 import { api, BasemapResp, SectorGeom, WxCell } from "./api";
 import {
+  COAST_BORDER,
   demandFill,
   LAND_FILL,
   makeAlbersFit,
@@ -208,7 +209,8 @@ export function SectorMap({
     ctx.clearRect(0, 0, size.w, size.h);
     ctx.lineJoin = "round";
 
-    // 0) light "carto-positron"-style basemap: water background + CONUS land fill
+    // 0) dark "dark-matter"-style basemap: water background + CONUS land fill,
+    //    with a faint coastline so the continent edge reads against the water.
     ctx.fillStyle = MAP_BG;
     ctx.fillRect(0, 0, size.w, size.h);
     if (base) {
@@ -217,6 +219,13 @@ export function SectorMap({
         ctx.beginPath();
         tracePath(ctx, r);
         ctx.fill();
+      }
+      ctx.lineWidth = 0.8;
+      ctx.strokeStyle = COAST_BORDER;
+      for (const r of base.nation) {
+        ctx.beginPath();
+        tracePath(ctx, r);
+        ctx.stroke();
       }
     }
 
@@ -268,7 +277,7 @@ export function SectorMap({
         ctx.fill();
         ctx.lineWidth = ratio >= 1 ? 1.2 : 0.4;
         ctx.strokeStyle =
-          ratio >= 1 ? "rgba(190,30,30,0.8)" : "rgba(100,116,139,0.18)";
+          ratio >= 1 ? "rgba(254,202,202,0.85)" : "rgba(148,163,184,0.16)";
         ctx.stroke();
       }
     }
@@ -302,19 +311,20 @@ export function SectorMap({
       off.width = size.w;
       off.height = size.h;
       const octx = off.getContext("2d")!;
-      // turbo density: layered translucent blobs (source-over keeps true turbo
-      // hues over the light basemap), blurred into a smooth heatmap.
+      // turbo density: additive blobs so overlapping cells build up and glow
+      // like radar against the dark basemap, blurred into smooth storm cores.
+      octx.globalCompositeOperation = "lighter";
       for (const c of weatherCells) {
         const p = proj([c[1], c[0]]);
         if (!p) continue;
-        octx.fillStyle = turboCss(c[2], 0.4);
+        octx.fillStyle = turboCss(c[2], 0.45);
         octx.beginPath();
         octx.arc(p[0], p[1], blobR, 0, Math.PI * 2);
         octx.fill();
       }
       ctx.save();
       ctx.filter = `blur(${Math.max(3, cellPx * 1.3)}px)`;
-      ctx.globalAlpha = 0.82;
+      ctx.globalAlpha = 0.9;
       ctx.drawImage(off, 0, 0, size.w, size.h);
       ctx.restore();
     }
@@ -326,7 +336,7 @@ export function SectorMap({
         ctx.beginPath();
         tp.forEach((p, i) => (i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1])));
         ctx.lineWidth = 1.8;
-        ctx.strokeStyle = "rgba(2,132,199,0.95)"; // darker cyan for light bg
+        ctx.strokeStyle = "rgba(56,189,248,0.95)"; // bright cyan on dark
         ctx.setLineDash([5, 4]);
         ctx.stroke();
         ctx.setLineDash([]);
@@ -340,7 +350,7 @@ export function SectorMap({
         ctx.beginPath();
         rp.forEach((p, i) => (i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1])));
         ctx.lineWidth = 2.4;
-        ctx.strokeStyle = "rgba(5,150,105,0.97)"; // darker green for light bg
+        ctx.strokeStyle = "rgba(52,211,153,0.97)"; // bright green on dark
         ctx.stroke();
       }
     }
@@ -357,7 +367,7 @@ export function SectorMap({
           ctx.fillStyle = "#ef4444";
           ctx.fill();
           ctx.lineWidth = 1;
-          ctx.strokeStyle = "rgba(60,0,0,0.55)"; // dark halo, reads on light bg
+          ctx.strokeStyle = "rgba(255,255,255,0.9)"; // white halo on dark
           ctx.stroke();
         } else {
           const r = denseFlights ? 1.5 : 2.4;
@@ -365,11 +375,11 @@ export function SectorMap({
           ctx.arc(p[0], p[1], r, 0, Math.PI * 2);
           ctx.fillStyle = viridisAlt(fp.altFt ?? 30000);
           ctx.fill();
-          if (!denseFlights) {
-            ctx.lineWidth = 0.6;
-            ctx.strokeStyle = "rgba(30,41,59,0.5)";
-            ctx.stroke();
-          }
+          // faint light outline keeps the dark (low-altitude) end of the
+          // Viridis ramp visible against the dark basemap
+          ctx.lineWidth = denseFlights ? 0.5 : 0.6;
+          ctx.strokeStyle = "rgba(226,232,240,0.35)";
+          ctx.stroke();
         }
       }
     }
@@ -384,7 +394,7 @@ export function SectorMap({
           ctx.lineTo(ps.pts[i * 2], ps.pts[i * 2 + 1]);
         ctx.closePath();
         ctx.lineWidth = 2.4;
-        ctx.strokeStyle = "#0284c7";
+        ctx.strokeStyle = "#38bdf8";
         ctx.stroke();
       }
     }

@@ -56,26 +56,27 @@ const RED = [239, 68, 68];
 const DEEPRED = [185, 28, 28];
 
 /**
- * Fill color for a demand/capacity ratio over the light "positron" basemap.
- * Empty sectors stay nearly transparent so land/state borders show through;
- * load ramps green -> amber -> orange -> red as it approaches and exceeds
- * capacity (translucent so the basemap remains visible).
+ * Fill color for a demand/capacity ratio over the dark "dark-matter" basemap.
+ * Idle sectors stay nearly transparent so the dark land/state borders show
+ * through; load ramps green -> amber -> orange -> red as it approaches and
+ * exceeds capacity, with opacity rising so colors read vividly on dark.
  */
 export function demandFill(ratio: number): string {
-  if (ratio <= 0) return "rgba(120,135,160,0.07)";
+  if (ratio <= 0) return "rgba(71,85,105,0.10)";
   let rgb: number[];
   if (ratio < 0.7) rgb = mix(GREEN, AMBER, ratio / 0.7);
   else if (ratio < 1.0) rgb = mix(AMBER, ORANGE, (ratio - 0.7) / 0.3);
   else if (ratio < 1.4) rgb = mix(ORANGE, RED, (ratio - 1.0) / 0.4);
   else rgb = mix(RED, DEEPRED, Math.min(1, (ratio - 1.4) / 0.6));
-  const alpha = ratio >= 1 ? 0.7 : 0.28 + 0.32 * (ratio / 1.0);
+  const alpha = ratio >= 1 ? 0.85 : 0.28 + 0.4 * (ratio / 1.0);
   return `rgba(${rgb[0] | 0},${rgb[1] | 0},${rgb[2] | 0},${alpha.toFixed(3)})`;
 }
 
-// ---- light "carto-positron"-style basemap palette ----
-export const MAP_BG = "#e7edf3"; // water / canvas background
-export const LAND_FILL = "#f6f7f9"; // CONUS landmass (slightly lighter than water)
-export const STATE_BORDER = "rgba(90,103,122,0.6)"; // state outlines
+// ---- dark "dark-matter"-style basemap palette (matches the slate-950 site) ----
+export const MAP_BG = "#020617"; // water / canvas background (slate-950)
+export const LAND_FILL = "#172339"; // CONUS landmass (a step lighter than water)
+export const STATE_BORDER = "rgba(148,163,184,0.22)"; // state outlines
+export const COAST_BORDER = "rgba(148,163,184,0.30)"; // nation / coastline outline
 
 // Generic stop-table interpolation: stops are [t in 0..1, [r,g,b]].
 function colorFromStops(stops: [number, number[]][], t: number): number[] {
