@@ -144,6 +144,15 @@ export interface WhatIfResp {
   sectors: { name: string; band: "HIGH" | "LOW"; capacity: number; demand: number[] }[];
 }
 
+// flight position tuple: [lon, lat, band(1=HIGH/0=LOW), inWeather(1/0)]
+export type PosTuple = [number, number, number, number];
+export interface PositionsResp {
+  snapshot: string;
+  t: number;
+  count: number;
+  flights: PosTuple[];
+}
+
 // weather cell tuple: [lat, lon, dbz, topFt]
 export type WxCell = [number, number, number, number];
 
@@ -219,4 +228,8 @@ export const api = {
     ),
   whatif: (snapshot: string) =>
     getJson<WhatIfResp>(`api/whatif?snapshot=${encodeURIComponent(snapshot)}`),
+  positions: (snapshot: string, t: number) =>
+    getJson<PositionsResp>(
+      `api/positions?snapshot=${encodeURIComponent(snapshot)}&t=${t}`,
+    ),
 };

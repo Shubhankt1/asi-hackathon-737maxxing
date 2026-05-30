@@ -35,6 +35,7 @@ interface Props {
   weatherCells?: WxCell[];
   cellDeg?: { dLat: number; dLon: number };
   flightPoints?: FlightPoint[];
+  denseFlights?: boolean; // many points (all-flights mode) -> smaller/fainter dots
   selectedTrack?: { lats: number[]; lons: number[] } | null;
   rerouteTrack?: { lats: number[]; lons: number[] } | null;
 }
@@ -72,6 +73,7 @@ export function SectorMap({
   weatherCells,
   cellDeg,
   flightPoints,
+  denseFlights,
   selectedTrack,
   rerouteTrack,
 }: Props) {
@@ -236,6 +238,11 @@ export function SectorMap({
           ctx.lineWidth = 1;
           ctx.strokeStyle = "rgba(255,255,255,0.9)";
           ctx.stroke();
+        } else if (denseFlights) {
+          ctx.beginPath();
+          ctx.arc(p[0], p[1], 1.1, 0, Math.PI * 2);
+          ctx.fillStyle = "rgba(148,163,184,0.6)";
+          ctx.fill();
         } else {
           ctx.beginPath();
           ctx.arc(p[0], p[1], 1.8, 0, Math.PI * 2);
@@ -269,6 +276,7 @@ export function SectorMap({
     weatherCells,
     cellDeg,
     flightPoints,
+    denseFlights,
     selectedTrack,
     rerouteTrack,
   ]);
