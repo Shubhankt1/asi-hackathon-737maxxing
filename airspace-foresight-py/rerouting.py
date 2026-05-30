@@ -182,6 +182,28 @@ _NEIGHBORS = [(-1, -1), (-1, 0), (-1, 1),
               (1, -1),  (1, 0),  (1, 1)]
 
 
+def line_of_sight(layer, i0, j0, i1, j1, hazard_dbz=HAZARD_DBZ):
+    """True if the straight segment between cells (i0,j0) and (i1,j1) crosses
+    no storm cell (dbz >= ``hazard_dbz``).
+
+    Used by Theta* to test whether two waypoints can be joined by a direct
+    great-circle leg. Sampled at twice the Chebyshev resolution so a thin storm
+    wall can't be tunneled through. ``floor(x + 0.5)`` (round-half-up) is used
+    on both the Python and JavaScript sides so the two agree exactly."""
+    di, dj = i1 - i0, j1 - j0
+    n = max(abs(di), abs(dj))
+    if n == 0:
+        return layer[i0, j0] < hazard_dbz
+    steps = 2 * n
+    for k in range(steps + 1):
+        t = k / steps
+        ii = math.floor(i0 + di * t + 0.5)
+        jj = math.floor(j0 + dj * t + 0.5)
+        if layer[ii, jj] >= hazard_dbz:
+            return False
+    return True
+
+
 class AStarRouter(Router):
     """A* search over the hazard grid.
 
@@ -253,10 +275,100 @@ class AStarRouter(Router):
         return [tuple(start)] + path + [tuple(goal)]
 
 
+class ThetaStarRouter(Router):
+    """Any-angle A* (Theta*) over the hazard grid.
+
+    Grid A* can only step to the 8 neighbors, so its routes zig-zag along grid
+    edges (sharp 45/90-degree turns no aircraft would fly). Theta* fixes this:
+    whenever it relaxes a neighbor it also checks whether that neighbor has a
+    clear line of sight back to the *parent* of the current cell; if so it links
+    them with one direct great-circle leg instead of routing through the
+    in-between cells. The result is long straight segments that only bend when a
+    storm actually forces it.
+
+    Cost model matches :class:`AStarRouter`: a direct (line-of-sight) leg costs
+    its haversine length (the corridor is storm-free by construction), while a
+    forced one-cell step keeps the ``hazard_multiplier`` penalty. Heuristic is
+    the haversine distance to the goal, so it stays admissible.
+    """
+
+    name = "thetastar"
+
+    def __init__(self, hazard_dbz=HAZARD_DBZ, soft=SOFT_PENALTY, hard=HARD_PENALTY):
+        self.hazard_dbz = hazard_dbz
+        self.soft = soft
+        self.hard = hard
+
+    def route(self, start, goal, grid: HazardGrid, frame: int = 0):
+        layer = grid.layers[frame]
+        rows, cols = grid.rows, grid.cols
+        si, sj = grid.latlon_to_cell(*start)
+        gi, gj = grid.latlon_to_cell(*goal)
+        goal_lat, goal_lon = grid.cell_center(gi, gj)
+
+        def h(i, j):
+            lat, lon = grid.cell_center(i, j)
+            return haversine_km(lat, lon, goal_lat, goal_lon)
+
+        def dist(ai, aj, bi, bj):
+            la, lo = grid.cell_center(ai, aj)
+            lb, lob = grid.cell_center(bi, bj)
+            return haversine_km(la, lo, lb, lob)
+
+        start_id = si * cols + sj
+        goal_id = gi * cols + gj
+        g_score = {start_id: 0.0}
+        parent = {start_id: start_id}
+        open_heap = [(h(si, sj), start_id)]
+        closed = set()
+
+        while open_heap:
+            _, cur = heapq.heappop(open_heap)
+            if cur == goal_id:
+                break
+            if cur in closed:
+                continue
+            closed.add(cur)
+            ci, cj = divmod(cur, cols)
+            pi, pj = divmod(parent[cur], cols)
+            for di, dj in _NEIGHBORS:
+                ni, nj = ci + di, cj + dj
+                if not (0 <= ni < rows and 0 <= nj < cols):
+                    continue
+                nid = ni * cols + nj
+                if nid in closed:
+                    continue
+                # Path 2: can we see the neighbor directly from cur's parent?
+                if line_of_sight(layer, pi, pj, ni, nj, self.hazard_dbz):
+                    cand_par = parent[cur]
+                    cand_g = g_score[parent[cur]] + dist(pi, pj, ni, nj)
+                else:                                   # Path 1: ordinary step
+                    mult = hazard_multiplier(float(layer[ni, nj]),
+                                             self.hazard_dbz, self.soft, self.hard)
+                    cand_par = cur
+                    cand_g = g_score[cur] + dist(ci, cj, ni, nj) * mult
+                if cand_g < g_score.get(nid, math.inf):
+                    parent[nid] = cand_par
+                    g_score[nid] = cand_g
+                    heapq.heappush(open_heap, (cand_g + h(ni, nj), nid))
+
+        if goal_id not in parent and goal_id != start_id:
+            return [tuple(start), tuple(goal)]          # no path: straight fallback
+
+        # Reconstruct any-angle waypoints (parent links may skip many cells).
+        cells = [goal_id]
+        while parent[cells[-1]] != cells[-1]:
+            cells.append(parent[cells[-1]])
+        cells.reverse()
+        path = [grid.cell_center(*divmod(c, cols)) for c in cells]
+        return [tuple(start)] + path + [tuple(goal)]
+
+
 # name -> Router instance. Register new strategies here; the visualization
 # exposes every key in this registry as a selectable algorithm.
 REROUTERS: dict[str, Router] = {
     AStarRouter.name: AStarRouter(),
+    ThetaStarRouter.name: ThetaStarRouter(),
 }
 
 
@@ -274,21 +386,30 @@ def router_config(hazard_dbz=HAZARD_DBZ, soft=SOFT_PENALTY, hard=HARD_PENALTY) -
 
 
 # --------------------------------------------------------------------------
-# Smoke test: build a synthetic storm wall and confirm A* routes around it.
+# Smoke test: build a synthetic storm wall with a gap and confirm every router
+# routes around it -- and that Theta* does so with far fewer (straighter) legs.
 # --------------------------------------------------------------------------
 if __name__ == "__main__":
-    rows = full = np.zeros((ROWS, COLS))
-    # A vertical wall of severe weather with a gap, sitting between two points.
-    full[:, 170:176] = 55.0
-    full[40:90, 170:176] = 0.0                     # leave a clear gap
+    full = np.zeros((ROWS, COLS))
+    full[:, 170:200] = 55.0                        # vertical wall of severe wx
+    full[40:90, 170:200] = 0.0                     # ... with a clear gap
     grid = HazardGrid([full], downsample=4)
-    router = get_router("astar")
-    # Two points on opposite sides of the wall.
-    start = grid.cell_center(60, 120)
-    goal = grid.cell_center(60, 250)
-    path = router.route(start, goal, grid, 0)
-    # Verify no waypoint sits inside a >=40 dBZ cell.
-    worst = max(grid.dbz_at(0, *grid.latlon_to_cell(la, lo)) for la, lo in path)
-    print(f"router={router.name} waypoints={len(path)} worst_dbz_on_path={worst:.0f}")
-    assert worst < grid.hazard_dbz, "A* routed through a storm!"
-    print("OK: A* avoided the storm wall.")
+
+    # Endpoints on opposite sides of the wall, away from the gap (forces a detour).
+    start = grid.cell_center(48, 20)
+    goal = grid.cell_center(48, 78)
+
+    def worst_on(path):
+        return max(grid.dbz_at(0, *grid.latlon_to_cell(la, lo)) for la, lo in path)
+
+    counts = {}
+    for name in REROUTERS:
+        path = get_router(name).route(start, goal, grid, 0)
+        worst = worst_on(path)
+        counts[name] = len(path)
+        print(f"router={name:<10} waypoints={len(path):>4}  worst_dbz_on_path={worst:.0f}")
+        assert worst < grid.hazard_dbz, f"{name} routed through a storm!"
+    print("OK: every router avoided the storm wall.")
+
+    assert counts["thetastar"] < counts["astar"], "Theta* should be straighter than A*"
+    print(f"OK: Theta* is straighter ({counts['thetastar']} vs {counts['astar']} waypoints).")
