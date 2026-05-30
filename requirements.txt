@@ -1,0 +1,6 @@
+numpy
+shapely
+scipy
+plotly
+streamlit
+anthropic
