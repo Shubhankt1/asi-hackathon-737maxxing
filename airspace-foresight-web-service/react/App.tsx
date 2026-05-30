@@ -70,10 +70,11 @@ const App = () => {
     "thetastar",
   );
   const [showWeather, setShowWeather] = useState(true);
+  const [controlsOpen, setControlsOpen] = useState(true);
   const [sectorColorMode, setSectorColorMode] = useState<SectorColorMode>(
     (["all", "alerts", "off"] as const).includes(params.get("colors") as any)
       ? (params.get("colors") as SectorColorMode)
-      : "all",
+      : "off",
   );
   const [flightMode, setFlightMode] = useState<FlightMode>(
     (["conflicts", "all", "weather", "off"] as const).includes(
@@ -412,6 +413,18 @@ const App = () => {
             colorMode={sectorColorMode}
           />
           <div className="absolute left-3 top-3 flex flex-col gap-2">
+            <button
+              onClick={() => setControlsOpen((o) => !o)}
+              className="flex items-center gap-2 rounded-md border border-slate-700 bg-slate-900/85 px-3 py-1 text-xs font-medium text-slate-200 hover:bg-slate-800"
+              title={controlsOpen ? "Hide map controls" : "Show map controls"}
+            >
+              <span>☰ Layers</span>
+              <span className="ml-auto text-slate-400">
+                {controlsOpen ? "▾" : "▸"}
+              </span>
+            </button>
+            {controlsOpen && (
+              <div className="flex flex-col gap-2">
             <div className="flex overflow-hidden rounded-md border border-slate-700 text-xs">
               {(["LOW", "HIGH"] as Band[]).map((b) => (
                 <button
@@ -472,6 +485,8 @@ const App = () => {
               <option value="off">▦ sectors: no colors</option>
             </select>
             <Legend />
+              </div>
+            )}
           </div>
           {whatifOn && whatif && (
             <div className="absolute left-1/2 top-3 -translate-x-1/2 rounded-md border border-emerald-700 bg-slate-900/95 px-4 py-1.5 text-xs shadow-xl">

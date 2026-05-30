@@ -6,11 +6,13 @@ import {
   demandFill,
   LAND_FILL,
   makeAlbersFit,
+  makeAlbersFitGeo,
   MAP_BG,
   pointInScreenRing,
   ratioLabel,
   STATE_BORDER,
   turboCss,
+  US_CITIES,
   viridisAlt,
 } from "./maputil";
 
@@ -150,12 +152,11 @@ export function SectorMap({
 
   const view = useMemo<{ proj: GeoProjection; list: ProjectedSector[] } | null>(() => {
     if (!bandSectors.length) return null;
-    const proj = makeAlbersFit(
-      bandSectors.map((s) => s.ring),
-      size.w,
-      size.h,
-      14,
-    );
+    // Fit to the actual US landmass so the recognizable map is centered; fall
+    // back to the sector extent until the basemap geometry loads.
+    const proj = basemap
+      ? makeAlbersFitGeo(basemap.nation, size.w, size.h, 18)
+      : makeAlbersFit(bandSectors.map((s) => s.ring), size.w, size.h, 14);
     const list: ProjectedSector[] = [];
     for (const s of bandSectors) {
       const xy: number[] = [];
@@ -181,7 +182,7 @@ export function SectorMap({
       });
     }
     return { proj, list };
-  }, [bandSectors, size.w, size.h]);
+  }, [bandSectors, size.w, size.h, basemap]);
 
   // Project the offline US basemap once per projection (resize / band change).
   const base = useMemo<{ nation: number[][]; states: number[][] } | null>(() => {
@@ -397,6 +398,26 @@ export function SectorMap({
         ctx.strokeStyle = "#38bdf8";
         ctx.stroke();
       }
+    }
+
+    // 6) major city labels for geographic reference (drawn last, on top)
+    ctx.font =
+      "10px Inter, ui-sans-serif, system-ui, -apple-system, sans-serif";
+    ctx.textBaseline = "middle";
+    for (const c of US_CITIES) {
+      const p = proj([c.lon, c.lat]);
+      if (!p) continue;
+      if (p[0] < 6 || p[0] > size.w - 6 || p[1] < 6 || p[1] > size.h - 6)
+        continue;
+      ctx.beginPath();
+      ctx.arc(p[0], p[1], 1.8, 0, Math.PI * 2);
+      ctx.fillStyle = "rgba(226,232,240,0.95)";
+      ctx.fill();
+      ctx.lineWidth = 2.5;
+      ctx.strokeStyle = "rgba(2,6,23,0.85)"; // dark halo for legibility
+      ctx.strokeText(c.name, p[0] + 4, p[1]);
+      ctx.fillStyle = "rgba(226,232,240,0.92)";
+      ctx.fillText(c.name, p[0] + 4, p[1]);
     }
   }, [
     view,

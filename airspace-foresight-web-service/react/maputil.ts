@@ -26,6 +26,25 @@ export function makeAlbersFit(
   );
 }
 
+/**
+ * Like makeAlbersFit but fits to any GeoJSON object (e.g. the US nation
+ * FeatureCollection) so the recognizable landmass is centered in the canvas.
+ */
+export function makeAlbersFitGeo(
+  geo: any,
+  w: number,
+  h: number,
+  pad: number,
+): GeoProjection {
+  return geoAlbers().fitExtent(
+    [
+      [pad, pad],
+      [w - pad, h - pad],
+    ],
+    geo,
+  );
+}
+
 export function bboxOfRings(rings: number[][][]): [number, number, number, number] {
   let minLon = Infinity,
     minLat = Infinity,
@@ -183,6 +202,32 @@ export function ratioLabel(ratio: number): string {
   if (ratio < 1.0) return "busy";
   return "OVER";
 }
+
+// ---- major US cities for map labels (name, lat, lon) ----
+export const US_CITIES: { name: string; lat: number; lon: number }[] = [
+  { name: "Seattle", lat: 47.61, lon: -122.33 },
+  { name: "Portland", lat: 45.52, lon: -122.68 },
+  { name: "San Francisco", lat: 37.77, lon: -122.42 },
+  { name: "Los Angeles", lat: 34.05, lon: -118.24 },
+  { name: "San Diego", lat: 32.72, lon: -117.16 },
+  { name: "Las Vegas", lat: 36.17, lon: -115.14 },
+  { name: "Phoenix", lat: 33.45, lon: -112.07 },
+  { name: "Salt Lake City", lat: 40.76, lon: -111.89 },
+  { name: "Denver", lat: 39.74, lon: -104.99 },
+  { name: "Dallas", lat: 32.78, lon: -96.8 },
+  { name: "Houston", lat: 29.76, lon: -95.37 },
+  { name: "Minneapolis", lat: 44.98, lon: -93.27 },
+  { name: "Kansas City", lat: 39.1, lon: -94.58 },
+  { name: "St. Louis", lat: 38.63, lon: -90.2 },
+  { name: "New Orleans", lat: 29.95, lon: -90.07 },
+  { name: "Chicago", lat: 41.88, lon: -87.63 },
+  { name: "Detroit", lat: 42.33, lon: -83.05 },
+  { name: "Atlanta", lat: 33.75, lon: -84.39 },
+  { name: "Miami", lat: 25.76, lon: -80.19 },
+  { name: "Washington", lat: 38.91, lon: -77.04 },
+  { name: "New York", lat: 40.71, lon: -74.01 },
+  { name: "Boston", lat: 42.36, lon: -71.06 },
+];
 
 // ---- client-side trajectory interpolation (mirrors the backend model) ----
 
