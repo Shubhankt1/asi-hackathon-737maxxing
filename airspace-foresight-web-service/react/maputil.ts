@@ -1,41 +1,29 @@
 // Projection + color helpers for the canvas sector map.
 
-export interface Projection {
-  project: (lon: number, lat: number) => [number, number];
-  scale: number;
-  kx: number; // longitude compression factor cos(meanLat)
-}
+import { geoAlbers, GeoProjection } from "d3-geo";
 
 /**
- * Fit a lon/lat bounding box into a w x h canvas with equirectangular
- * projection (longitude compressed by cos(meanLat) so CONUS isn't stretched).
+ * Albers conic projection (the standard for US maps — correct proportions and
+ * curved parallels) fitted to the supplied polygon rings so CONUS fills the
+ * canvas. Returns a d3 projection; call proj([lon, lat]) -> [x, y] | null.
  */
-export function makeProjection(
-  bbox: [number, number, number, number],
+export function makeAlbersFit(
+  rings: number[][][],
   w: number,
   h: number,
   pad: number,
-): Projection {
-  const [minLon, minLat, maxLon, maxLat] = bbox;
-  const meanLat = (minLat + maxLat) / 2;
-  const kx = Math.cos((meanLat * Math.PI) / 180);
-  const dataW = (maxLon - minLon) * kx;
-  const dataH = maxLat - minLat;
-  const sx = (w - 2 * pad) / dataW;
-  const sy = (h - 2 * pad) / dataH;
-  const scale = Math.min(sx, sy);
-  // center
-  const offX = (w - dataW * scale) / 2;
-  const offY = (h - dataH * scale) / 2;
-  return {
-    scale,
-    kx,
-    project: (lon: number, lat: number) => {
-      const x = offX + (lon - minLon) * kx * scale;
-      const y = offY + (maxLat - lat) * scale; // lat up -> y down
-      return [x, y];
-    },
-  };
+): GeoProjection {
+  const geo = {
+    type: "MultiPolygon",
+    coordinates: rings.map((r) => [r]),
+  } as any;
+  return geoAlbers().fitExtent(
+    [
+      [pad, pad],
+      [w - pad, h - pad],
+    ],
+    geo,
+  );
 }
 
 export function bboxOfRings(rings: number[][][]): [number, number, number, number] {
@@ -83,12 +71,40 @@ export function demandFill(ratio: number): string {
   return `rgba(${rgb[0] | 0},${rgb[1] | 0},${rgb[2] | 0},${alpha.toFixed(3)})`;
 }
 
-/** Convective cell color by reflectivity (dBZ): amber -> red -> magenta. */
-export function wxColor(dbz: number, alpha = 0.62): string {
-  let rgb: number[];
-  if (dbz < 50) rgb = mix([250, 204, 21], [239, 68, 68], (dbz - 40) / 10);
-  else rgb = mix([239, 68, 68], [217, 70, 239], Math.min(1, (dbz - 50) / 10));
-  return `rgba(${rgb[0] | 0},${rgb[1] | 0},${rgb[2] | 0},${alpha})`;
+// Reflectivity color ramp (NWS-style), keyed by dBZ.
+const RADAR_STOPS: [number, number[]][] = [
+  [15, [56, 142, 110]], // light - teal/green
+  [25, [40, 190, 90]], // green
+  [32, [150, 214, 50]], // yellow-green
+  [38, [245, 222, 60]], // yellow
+  [43, [247, 165, 45]], // orange
+  [48, [240, 90, 45]], // red-orange
+  [53, [222, 40, 48]], // red
+  [58, [206, 50, 130]], // red-magenta
+  [63, [224, 80, 235]], // magenta
+];
+
+/** Reflectivity color [r,g,b] for a dBZ value (clamped to the ramp). */
+export function radarRGB(dbz: number): number[] {
+  if (dbz <= RADAR_STOPS[0][0]) return RADAR_STOPS[0][1];
+  for (let i = 1; i < RADAR_STOPS.length; i++) {
+    if (dbz <= RADAR_STOPS[i][0]) {
+      const [d0, c0] = RADAR_STOPS[i - 1];
+      const [d1, c1] = RADAR_STOPS[i];
+      return mix(c0, c1, (dbz - d0) / (d1 - d0));
+    }
+  }
+  return RADAR_STOPS[RADAR_STOPS.length - 1][1];
+}
+
+/** Alpha for a reflectivity blob — lighter precip is fainter. */
+export function radarAlpha(dbz: number): number {
+  return Math.max(0.18, Math.min(0.8, 0.18 + ((dbz - 15) / 45) * 0.6));
+}
+
+export function radarCss(dbz: number, alpha = 0.7): string {
+  const c = radarRGB(dbz);
+  return `rgba(${c[0] | 0},${c[1] | 0},${c[2] | 0},${alpha})`;
 }
 
 export function ratioLabel(ratio: number): string {

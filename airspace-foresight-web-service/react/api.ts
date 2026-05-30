@@ -205,9 +205,9 @@ export const api = {
     getJson<ConflictsResp>(
       `api/conflicts?snapshot=${encodeURIComponent(snapshot)}`,
     ),
-  weather: (snapshot: string, strip: number) =>
+  weather: (snapshot: string, strip: number, minDbz = 15) =>
     getJson<WeatherResp>(
-      `api/weather?snapshot=${encodeURIComponent(snapshot)}&strip=${strip}`,
+      `api/weather?snapshot=${encodeURIComponent(snapshot)}&strip=${strip}&minDbz=${minDbz}`,
     ),
   recommendations: (snapshot: string) =>
     getJson<RecommendationsResp>(
