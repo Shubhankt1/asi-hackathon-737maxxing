@@ -3,6 +3,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import zlib from "node:zlib";
 import { fileURLToPath } from "node:url";
 import { Band, Flight, RoutesFile, SectorRecord } from "./types.js";
 import { FlightTrack } from "./trajectory.js";
@@ -13,6 +14,20 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // dist/engine -> project root -> data
 export const DATA_DIR = path.resolve(__dirname, "../../data");
 
+/**
+ * Read + parse a JSON file, transparently supporting gzip. Mirrors the Python
+ * loaders (data_loader.py), which prefer a `.gz` sibling when present and fall
+ * back to the plain file. `jsonPath` is the uncompressed path.
+ */
+function readJsonMaybeGz<T = any>(jsonPath: string): T {
+  const gzPath = `${jsonPath}.gz`;
+  if (fs.existsSync(gzPath)) {
+    const text = zlib.gunzipSync(fs.readFileSync(gzPath)).toString("utf8");
+    return JSON.parse(text) as T;
+  }
+  return JSON.parse(fs.readFileSync(jsonPath, "utf8")) as T;
+}
+
 const STEP_MS = 5 * 60 * 1000; // 5-minute demand steps
 const HORIZON_MS = 18 * 60 * 60 * 1000; // 18 hours forward
 
@@ -20,9 +35,7 @@ const HORIZON_MS = 18 * 60 * 60 * 1000; // 18 hours forward
 let _sectorIndex: SectorIndex | null = null;
 export function getSectorIndex(): SectorIndex {
   if (!_sectorIndex) {
-    const gj = JSON.parse(
-      fs.readFileSync(path.join(DATA_DIR, "sectors.geojson"), "utf8"),
-    );
+    const gj = readJsonMaybeGz(path.join(DATA_DIR, "sectors.geojson"));
     _sectorIndex = new SectorIndex(buildSectorRecords(gj));
   }
   return _sectorIndex;
@@ -110,7 +123,7 @@ export function snapshotDir(snapshot: string): string {
 
 function loadRoutes(snapshot: string): RoutesFile {
   const p = path.join(snapshotDir(snapshot), "routes.json");
-  return JSON.parse(fs.readFileSync(p, "utf8"));
+  return readJsonMaybeGz<RoutesFile>(p);
 }
 
 export function getAnalysis(snapshot: string): SnapshotAnalysis {
