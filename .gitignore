@@ -1,1 +1,28 @@
 hackathon_data_bundle/
+# Provided hackathon input data (large; regenerate from source, not committed)
+hackathon_data_bundle/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Node / build artifacts (also covered by the service's own .gitignore)
+node_modules/
+dist/
+bundle/
+
+# Staged/derived data produced by prep/prep_wx.py
+airspace-foresight-web-service/data/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+.vscode/
+.idea/
+
+# Logs
+*.log
+npm-debug.log*

@@ -1,0 +1,10 @@
+{
+  "port": 3005,
+  "logLevel": "info",
+  "services": {
+    "AirspaceForesightWebService": {
+      "servicePath": ".",
+      "funnyJokeBaseUrl": "https://official-joke-api.appspot.com"
+    }
+  }
+}
