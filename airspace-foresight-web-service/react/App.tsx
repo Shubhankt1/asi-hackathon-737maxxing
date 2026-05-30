@@ -862,27 +862,15 @@ function Legend() {
       </div>
       <div className="flex items-center gap-2">
         <span className="mr-1 text-slate-500">weather</span>
-        <span className="flex items-center gap-0.5">
-          <span
-            className="inline-block h-2.5 w-2.5 rounded-sm"
-            style={{ background: "rgb(250,204,21)" }}
-          />
-          40
-        </span>
-        <span className="flex items-center gap-0.5">
-          <span
-            className="inline-block h-2.5 w-2.5 rounded-sm"
-            style={{ background: "rgb(239,68,68)" }}
-          />
-          50
-        </span>
-        <span className="flex items-center gap-0.5">
-          <span
-            className="inline-block h-2.5 w-2.5 rounded-sm"
-            style={{ background: "rgb(217,70,239)" }}
-          />
-          60 dBZ
-        </span>
+        <span className="text-[9px] text-slate-500">15</span>
+        <span
+          className="inline-block h-2.5 w-24 rounded-sm"
+          style={{
+            background:
+              "linear-gradient(to right, rgb(56,142,110), rgb(40,190,90), rgb(245,222,60), rgb(247,165,45), rgb(222,40,48), rgb(224,80,235))",
+          }}
+        />
+        <span className="text-[9px] text-slate-500">60+ dBZ</span>
         <span className="ml-1 flex items-center gap-0.5">
           <span className="inline-block h-2 w-2 rounded-full bg-red-500" />
           flt in wx

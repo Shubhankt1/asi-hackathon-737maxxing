@@ -1,13 +1,13 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { GeoProjection } from "d3-geo";
 import { SectorGeom, WxCell } from "./api";
 import {
-  Projection,
-  bboxOfRings,
   demandFill,
-  makeProjection,
+  makeAlbersFit,
   pointInScreenRing,
+  radarAlpha,
+  radarCss,
   ratioLabel,
-  wxColor,
 } from "./maputil";
 
 interface ProjectedSector {
@@ -31,7 +31,6 @@ interface Props {
   timeIndex: number;
   onPick?: (name: string | null) => void;
   selected?: string | null;
-  // weather + flights
   showWeather: boolean;
   weatherCells?: WxCell[];
   cellDeg?: { dLat: number; dLon: number };
@@ -47,6 +46,19 @@ interface HoverState {
   capacity: number;
   x: number;
   y: number;
+}
+
+function projectTrack(
+  proj: GeoProjection,
+  lats: number[],
+  lons: number[],
+): [number, number][] {
+  const out: [number, number][] = [];
+  for (let i = 0; i < lats.length; i++) {
+    const p = proj([lons[i], lats[i]]);
+    if (p) out.push(p as [number, number]);
+  }
+  return out;
 }
 
 export function SectorMap({
@@ -84,32 +96,38 @@ export function SectorMap({
     [sectors, band],
   );
 
-  const view = useMemo<{ proj: Projection; list: ProjectedSector[] } | null>(() => {
+  const view = useMemo<{ proj: GeoProjection; list: ProjectedSector[] } | null>(() => {
     if (!bandSectors.length) return null;
-    const bbox = bboxOfRings(bandSectors.map((s) => s.ring));
-    const proj = makeProjection(bbox, size.w, size.h, 16);
-    const list = bandSectors.map((s) => {
-      const pts = new Float64Array(s.ring.length * 2);
+    const proj = makeAlbersFit(
+      bandSectors.map((s) => s.ring),
+      size.w,
+      size.h,
+      14,
+    );
+    const list: ProjectedSector[] = [];
+    for (const s of bandSectors) {
+      const xy: number[] = [];
       let minx = Infinity,
         miny = Infinity,
         maxx = -Infinity,
         maxy = -Infinity;
-      for (let i = 0; i < s.ring.length; i++) {
-        const [x, y] = proj.project(s.ring[i][0], s.ring[i][1]);
-        pts[i * 2] = x;
-        pts[i * 2 + 1] = y;
-        if (x < minx) minx = x;
-        if (y < miny) miny = y;
-        if (x > maxx) maxx = x;
-        if (y > maxy) maxy = y;
+      for (const [lon, lat] of s.ring) {
+        const p = proj([lon, lat]);
+        if (!p) continue;
+        xy.push(p[0], p[1]);
+        if (p[0] < minx) minx = p[0];
+        if (p[1] < miny) miny = p[1];
+        if (p[0] > maxx) maxx = p[0];
+        if (p[1] > maxy) maxy = p[1];
       }
-      return {
+      if (xy.length < 6) continue;
+      list.push({
         name: s.name,
         capacity: s.capacity,
-        pts,
-        sbbox: [minx, miny, maxx, maxy] as [number, number, number, number],
-      };
-    });
+        pts: Float64Array.from(xy),
+        sbbox: [minx, miny, maxx, maxy],
+      });
+    }
     return { proj, list };
   }, [bandSectors, size.w, size.h]);
 
@@ -125,6 +143,7 @@ export function SectorMap({
     const ctx = canvas.getContext("2d")!;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, size.w, size.h);
+    ctx.lineJoin = "round";
 
     // 1) sector demand fills
     for (const ps of list) {
@@ -139,58 +158,79 @@ export function SectorMap({
       ctx.closePath();
       ctx.fillStyle = demandFill(ratio);
       ctx.fill();
-      ctx.lineWidth = ratio >= 1 ? 1.4 : 0.4;
+      ctx.lineWidth = ratio >= 1 ? 1.2 : 0.5;
       ctx.strokeStyle =
-        ratio >= 1 ? "rgba(254,202,202,0.9)" : "rgba(148,163,184,0.22)";
+        ratio >= 1 ? "rgba(254,202,202,0.85)" : "rgba(148,163,184,0.18)";
       ctx.stroke();
     }
 
-    // 2) weather hazard cells
-    if (showWeather && weatherCells && cellDeg) {
-      const cw = Math.max(2, cellDeg.dLon * proj.kx * proj.scale + 0.6);
-      const ch = Math.max(2, cellDeg.dLat * proj.scale + 0.6);
+    // 2) weather precipitation — drawn to an offscreen layer as additive blobs
+    //    then blurred + composited, so scattered radar cells merge into smooth
+    //    glowing storm regions that read clearly above the demand map.
+    if (showWeather && weatherCells && weatherCells.length && cellDeg) {
+      let cellPx = 6;
+      const a0 = proj([weatherCells[0][1], weatherCells[0][0]]);
+      const b0 = proj([
+        weatherCells[0][1] + cellDeg.dLon,
+        weatherCells[0][0] - cellDeg.dLat,
+      ]);
+      if (a0 && b0) cellPx = Math.hypot(b0[0] - a0[0], b0[1] - a0[1]) || 6;
+      const blobR = Math.max(7, cellPx * 2.4);
+
+      const off = document.createElement("canvas");
+      off.width = size.w;
+      off.height = size.h;
+      const octx = off.getContext("2d")!;
+      octx.globalCompositeOperation = "lighter"; // intensities build up
       for (const c of weatherCells) {
-        const [x, y] = proj.project(c[1], c[0]);
-        ctx.fillStyle = wxColor(c[2]);
-        ctx.fillRect(x - cw / 2, y - ch / 2, cw, ch);
+        const p = proj([c[1], c[0]]);
+        if (!p) continue;
+        octx.fillStyle = radarCss(c[2], radarAlpha(c[2]) * 0.5);
+        octx.beginPath();
+        octx.arc(p[0], p[1], blobR, 0, Math.PI * 2);
+        octx.fill();
       }
+      ctx.save();
+      ctx.filter = `blur(${Math.max(3, cellPx * 1.3)}px)`;
+      ctx.globalAlpha = 0.88;
+      ctx.drawImage(off, 0, 0, size.w, size.h);
+      ctx.restore();
     }
 
-    // 3) selected flight route
+    // 3) selected flight route (dashed cyan)
     if (selectedTrack) {
-      ctx.beginPath();
-      for (let i = 0; i < selectedTrack.lats.length; i++) {
-        const [x, y] = proj.project(selectedTrack.lons[i], selectedTrack.lats[i]);
-        if (i === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
+      const tp = projectTrack(proj, selectedTrack.lats, selectedTrack.lons);
+      if (tp.length > 1) {
+        ctx.beginPath();
+        tp.forEach((p, i) => (i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1])));
+        ctx.lineWidth = 1.6;
+        ctx.strokeStyle = "rgba(56,189,248,0.9)";
+        ctx.setLineDash([5, 4]);
+        ctx.stroke();
+        ctx.setLineDash([]);
       }
-      ctx.lineWidth = 1.6;
-      ctx.strokeStyle = "rgba(56,189,248,0.9)";
-      ctx.setLineDash([5, 4]);
-      ctx.stroke();
-      ctx.setLineDash([]);
     }
 
     // 3b) reroute path (solid green)
     if (rerouteTrack && rerouteTrack.lats.length) {
-      ctx.beginPath();
-      for (let i = 0; i < rerouteTrack.lats.length; i++) {
-        const [x, y] = proj.project(rerouteTrack.lons[i], rerouteTrack.lats[i]);
-        if (i === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
+      const rp = projectTrack(proj, rerouteTrack.lats, rerouteTrack.lons);
+      if (rp.length > 1) {
+        ctx.beginPath();
+        rp.forEach((p, i) => (i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1])));
+        ctx.lineWidth = 2.2;
+        ctx.strokeStyle = "rgba(52,211,153,0.95)";
+        ctx.stroke();
       }
-      ctx.lineWidth = 2.2;
-      ctx.strokeStyle = "rgba(52,211,153,0.95)";
-      ctx.stroke();
     }
 
     // 4) conflict flight points
     if (flightPoints) {
       for (const fp of flightPoints) {
-        const [x, y] = proj.project(fp.lon, fp.lat);
+        const p = proj([fp.lon, fp.lat]);
+        if (!p) continue;
         if (fp.hazard) {
           ctx.beginPath();
-          ctx.arc(x, y, 3.4, 0, Math.PI * 2);
+          ctx.arc(p[0], p[1], 3.4, 0, Math.PI * 2);
           ctx.fillStyle = "#ef4444";
           ctx.fill();
           ctx.lineWidth = 1;
@@ -198,7 +238,7 @@ export function SectorMap({
           ctx.stroke();
         } else {
           ctx.beginPath();
-          ctx.arc(x, y, 1.8, 0, Math.PI * 2);
+          ctx.arc(p[0], p[1], 1.8, 0, Math.PI * 2);
           ctx.fillStyle = "rgba(251,191,36,0.7)";
           ctx.fill();
         }
