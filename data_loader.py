@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Optional
 
 import numpy as np
-from shapely.geometry import shape
+from shapely.geometry import shape, Polygon
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -127,7 +127,7 @@ class Sector:
     altitude_from_ft: float
     altitude_to_ft: float
     capacity: int
-    geometry: object   # shapely Polygon
+    geometry: Polygon
 
     def contains_flight(self, lat: float, lon: float, altitude_ft: float) -> bool:
         from shapely.geometry import Point
